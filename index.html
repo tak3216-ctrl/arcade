@@ -154,14 +154,20 @@ html,body{margin:0;height:100%;overflow:hidden;background:var(--ai);
    type: 'race' | 'upright' ／ x,rot = 店内での立ち位置
    ========================================================== */
 var GAMES = [
-  { type:'race', kindLabel:'RACING CABINET', title:'ナイトサーキット',
-    desc:'夜の湾岸を走るタイムアタック。ドリフトを繋ぐとブーストが溜まります。操作は矢印キー。',
-    tags:['レース','キーボード','WebGL'], url:'./games/race/index.html',
-    color:'#3FE0E0', x:-330, z:-40, rot:22 },
-  { type:'upright', kindLabel:'UPRIGHT CABINET', title:'弾幕ブロックス',
-    desc:'落ちてくるブロックを撃ち落とす縦画面アーケード。ハイスコアはブラウザに残ります。',
-    tags:['アーケード','スマホ対応'], url:'./games/arcade/index.html',
-    color:'#FF4E86', x:330, z:-40, rot:-22 }
+  { type:'race', kindLabel:'RACING CABINET', title:'V RACER',
+    desc:'コースを駆け抜けるレースゲーム。ハンドルを握って最速タイムを狙ってください。',
+    tags:['レース','3D'], url:'./games/Vracer/index.html',
+    color:'#3FE0E0', x:-430, z:-40, rot:20 },
+
+  { type:'upright', kindLabel:'UPRIGHT CABINET', title:'BALLOON',
+    desc:'風船でどこまでも上昇していくゲーム。障害物をよけながら高度を稼ぎます。',
+    tags:['アクション','上昇'], url:'./games/balloon/index.html',
+    color:'#FF4E86', x:70, z:20, rot:-4 },
+
+  { type:'upright', kindLabel:'UPRIGHT CABINET', title:'CLIMB',
+    desc:'ジャンプで足場を登っていくアクション。落ちないように上を目指してください。',
+    tags:['アクション','ジャンプ'], url:'./games/climb/index.html',
+    color:'#FFC94A', x:450, z:-40, rot:-24 }
 ];
 
 /* ---------- 部品ヘルパー ---------- */
