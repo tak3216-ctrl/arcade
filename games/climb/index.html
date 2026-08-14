@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>鉄球クライム 3D</title>
+<style>
+  html,body{margin:0;padding:0;overflow:hidden;background:#000;font-family:"Hiragino Kaku Gothic ProN","Meiryo",monospace;}
+  #app{position:fixed;inset:0;}
+  #hud{position:fixed;top:10px;left:14px;color:#ffe36e;font-size:15px;line-height:1.6;
+       text-shadow:0 0 6px #000,0 0 12px #ff5a00;pointer-events:none;letter-spacing:1px;}
+  #mapFrame{position:fixed;top:8px;right:8px;width:260px;height:210px;
+       border:2px solid #ff4d6d;border-radius:4px;box-shadow:0 0 14px #ff4d6d88;pointer-events:none;}
+  #mapLabel{position:absolute;top:-2px;left:4px;color:#ff9fb0;font-size:11px;letter-spacing:1px;}
+  #msg{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+       color:#fff;font-size:34px;text-align:center;text-shadow:0 0 10px #000;pointer-events:none;
+       flex-direction:column;gap:14px;}
+  #msg small{font-size:16px;color:#9fe8ff;}
+  #help{position:fixed;bottom:10px;left:14px;color:#8fd7ff;font-size:12px;line-height:1.7;
+        text-shadow:0 0 6px #000;pointer-events:none;}
+  #hammerBar{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);
+        width:280px;height:12px;border:2px solid #ffd400;border-radius:6px;display:none;
+        box-shadow:0 0 12px #ffd40088;}
+  #hammerFill{height:100%;width:100%;background:linear-gradient(90deg,#ffd400,#ff7a00);}
+
+  /* タッチ操作パッド */
+  #pad{position:fixed;inset:auto 0 0 0;height:200px;pointer-events:none;
+       display:none;user-select:none;-webkit-user-select:none;touch-action:none;z-index:20;}
+  #pad.on{display:block;}
+  .btn{position:absolute;pointer-events:auto;display:flex;align-items:center;justify-content:center;
+       border:2px solid #8fd7ff;border-radius:14px;background:rgba(10,20,40,.5);
+       color:#cfefff;font-size:13px;font-weight:bold;line-height:1.15;text-align:center;
+       backdrop-filter:blur(2px);-webkit-tap-highlight-color:transparent;}
+  .btn.press{background:rgba(120,200,255,.55);color:#04121f;}
+  .btn.big{font-size:22px;}
+  #bFwd {left:20px;  bottom:120px; width:76px;height:66px;}
+  #bBack{left:20px;  bottom:20px;  width:76px;height:66px;}
+  #bTurnL{left:104px;bottom:70px;  width:66px;height:66px;border-radius:33px;}
+  #bTurnR{left:176px;bottom:70px;  width:66px;height:66px;border-radius:33px;}
+  #bJump{right:20px; bottom:20px;  width:96px;height:76px;border-color:#ffd400;color:#ffe98a;}
+  #bLad {right:20px; bottom:110px; width:96px;height:66px;border-color:#35e0e0;color:#9ff7f7;}
+  @media (max-width:620px){
+    #help{font-size:10px;line-height:1.5;bottom:210px;}
+    #hud{font-size:12px;}
+    #hammerBar{bottom:206px;width:200px;}
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="hud"></div>
+<div id="mapFrame"><span id="mapLabel">SIDE VIEW</span></div>
+<div id="msg"></div>
+<div id="hammerBar"><div id="hammerFill"></div></div>
+<div id="pad">
+  <div class="btn big" id="bFwd">▲<br><span style="font-size:10px">前進</span></div>
+  <div class="btn big" id="bBack">▼<br><span style="font-size:10px">後退</span></div>
+  <div class="btn big" id="bTurnL">↺</div>
+  <div class="btn big" id="bTurnR">↻</div>
+  <div class="btn" id="bLad">階段<br>取付き</div>
+  <div class="btn" id="bJump">JUMP</div>
+</div>
+<div id="help">
+  ↑ 前進 ／ ↓ 後退（向いている方向が正面）<br>
+  ← / → 視点を180度回転（振り向き）<br>
+  階段の前で SHIFT 取り付き ／ 取り付き中は ↑↓ で昇り下り<br>
+  SPACE ジャンプ ／ R リスタート（スマホは画面タップ）／ 操作は画面下のボタン ／ ハンマーに触れると8秒間ハンマー連打
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+"use strict";
+
+/* ============ 定数 ============ */
+const LEVELS   = 7;          // 0〜6（6段目=最上段の短い足場）
+const LV_H     = 4.0;
+const X_MIN    = -13, X_MAX = 13;
+const TOP_XMIN = -5.0, TOP_XMAX = 5.0;   // 7段目（index 6）の短い足場
+const DEPTH    = 3.0;
+const SPEED    = 5.2;
+const CLIMB_SP = 3.4;
+const JUMP_V   = 8.2;
+const GRAV     = 22.0;
+const BALL_SP  = 3.52;
+const SPAWN_MIN = 3.0, SPAWN_MAX = 5.0;
+const HAMMER_TIME = 8.0;
+const GOBLIN_LV = LEVELS - 2;   // ゴブリンは6段目（index 5）
+
+// 各階の左右端
+const xMinOf = l => (l === LEVELS-1 ? TOP_XMIN : X_MIN);
+const xMaxOf = l => (l === LEVELS-1 ? TOP_XMAX : X_MAX);
+
+const playerDir = l => (l % 2 === 0) ?  1 : -1;
+const ballDir   = l => (l % 2 === 0) ? -1 :  1;
+
+// 傾斜：鉄球が転がる方向へ下る。最上段は水平。
+const SLOPE_K = 0.045;
+const slopeOf = l => (l === LEVELS-1 ? 0 : -ballDir(l) * SLOPE_K);
+// その階の床面の高さ
+const surfaceY = (l, x) => l*LV_H + slopeOf(l) * x;
+
+// 階段（lv → lv+1）
+const LADDERS = [
+  {lv:0, x: 11.0}, {lv:0, x: -2.0},
+  {lv:1, x:-11.0}, {lv:1, x:  3.0},
+  {lv:2, x: 11.0}, {lv:2, x: -3.0},
+  {lv:3, x:-11.0}, {lv:3, x:  2.0},
+  {lv:4, x: 11.0},
+  {lv:5, x:  4.0}
+];
+const LADDER_Z = 1.05;
+
+const HAMMERS = [ {lv:2, x:-9.5}, {lv:4, x:-9.5} ];   // ミニマップの3段目・5段目 左端
+
+const GOBLIN_X = -11.5;
+const GOAL_X   = -3.5;
+
+/* ============ 基本セットアップ ============ */
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth, innerHeight);
+app.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x05030c);
+scene.fog = new THREE.Fog(0x05030c, 30, 70);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.08, 200);
+scene.add(camera);
+
+let MAPW = 260, MAPH = 210;
+if(innerWidth < 620){ MAPW = 150; MAPH = 122; }
+(function(){ const f=document.getElementById('mapFrame');
+  f.style.width = MAPW+'px'; f.style.height = MAPH+'px'; })();
+const mapCam = new THREE.OrthographicCamera(-15,15,-1,-1,0.1,200);
+(function(){
+  const h = (LEVELS*LV_H) + 6, w = h * (MAPW/MAPH);
+  mapCam.left=-w/2; mapCam.right=w/2; mapCam.top=h/2; mapCam.bottom=-h/2;
+  mapCam.position.set(0, (LEVELS-1)*LV_H/2 + 1, 60);
+  mapCam.lookAt(0, (LEVELS-1)*LV_H/2 + 1, 0);
+  mapCam.updateProjectionMatrix();
+})();
+
+scene.add(new THREE.AmbientLight(0x6677aa, 0.9));
+const dir1 = new THREE.DirectionalLight(0xffffff, 0.9); dir1.position.set(6,18,12); scene.add(dir1);
+const dir2 = new THREE.DirectionalLight(0xff5566, 0.5); dir2.position.set(-10,4,-8); scene.add(dir2);
+const mapLight = new THREE.DirectionalLight(0xffffff, 1.6);
+mapLight.position.set(0,10,60); mapLight.visible=false; scene.add(mapLight);
+const mapAmb = new THREE.AmbientLight(0xffffff, 0.0); scene.add(mapAmb);
+
+/* ============ ステージ ============ */
+const world = new THREE.Group(); scene.add(world);
+
+const floorMat  = new THREE.MeshLambertMaterial({color:0xd6205a});
+const trussMat  = new THREE.MeshLambertMaterial({color:0xff5f8f});
+const ladderMat = new THREE.MeshLambertMaterial({color:0x35e0e0});
+
+for(let l=0;l<LEVELS;l++){
+  const xa = xMinOf(l)-1, xb = xMaxOf(l)+1;
+  const len = xb - xa, k = slopeOf(l), ang = Math.atan(k);
+
+  const g = new THREE.Group();           // 傾斜させたローカル空間に組む
+  const top = new THREE.Mesh(new THREE.BoxGeometry(len, 0.35, DEPTH), floorMat);
+  top.position.set(0, -0.2, 0); g.add(top);
+
+  for(let t=-len/2; t<=len/2; t+=1.6){   // トラス（斜め材）
+    const b = new THREE.Mesh(new THREE.BoxGeometry(0.16,1.0,0.16), trussMat);
+    b.position.set(t, -0.95, -DEPTH/2+0.15);
+    b.rotation.z = (Math.round(t)%2 ? 0.5 : -0.5);
+    g.add(b);
+  }
+  const rail = new THREE.Mesh(new THREE.BoxGeometry(len,0.14,0.14), trussMat);
+  rail.position.set(0,-1.5,-DEPTH/2+0.15); g.add(rail);
+
+  const cx = (xa+xb)/2;
+  g.position.set(cx, surfaceY(l, cx), 0);
+  g.rotation.z = ang;
+  world.add(g);
+}
+
+// 階段（両端の床面高さに合わせる）
+LADDERS.forEach(L=>{
+  const y0 = surfaceY(L.lv, L.x), y1 = surfaceY(L.lv+1, L.x), h = y1 - y0;
+  const g = new THREE.Group();
+  [-0.45,0.45].forEach(ox=>{
+    const r = new THREE.Mesh(new THREE.BoxGeometry(0.12,h,0.12), ladderMat);
+    r.position.set(ox, h/2, 0); g.add(r);
+  });
+  for(let i=0.35;i<h;i+=0.55){
+    const s = new THREE.Mesh(new THREE.BoxGeometry(1.05,0.1,0.1), ladderMat);
+    s.position.set(0,i,0); g.add(s);
+  }
+  g.position.set(L.x, y0-0.2, LADDER_Z);
+  world.add(g);
+});
+
+/* ============ ハンマー ============ */
+function makeHammer(scale){
+  const g = new THREE.Group();
+  const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.09,0.09,1.2,8),
+                                new THREE.MeshLambertMaterial({color:0x8b5a2b}));
+  handle.position.y = 0.6; g.add(handle);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.75,0.5,0.5),
+                              new THREE.MeshPhongMaterial({color:0xffcf3d, shininess:80}));
+  head.position.y = 1.3; g.add(head);
+  g.scale.setScalar(scale||1);
+  return g;
+}
+const pickups = [];
+HAMMERS.forEach(H=>{
+  const m = makeHammer(1.0);
+  m.position.set(H.x, surfaceY(H.lv,H.x)+0.3, 0);
+  world.add(m);
+  pickups.push({mesh:m, lv:H.lv, x:H.x, alive:true, respawn:0});
+});
+
+// 一人称で手に持つハンマー（カメラの子）
+const hammerFP = makeHammer(1.1);
+hammerFP.position.set(0.55,-0.75,-1.15);
+hammerFP.visible = false;
+camera.add(hammerFP);
+
+// ミニマップ用（プレイヤーに追従）
+const hammerMap = makeHammer(1.0);
+hammerMap.position.set(0,0.9,0);
+hammerMap.visible = false;
+
+/* ============ ゴブリン ============ */
+function makeGoblin(){
+  const g = new THREE.Group();
+  const skin  = new THREE.MeshPhongMaterial({color:0x6b7f3a, shininess:8, flatShading:true});
+  const skin2 = new THREE.MeshPhongMaterial({color:0x4e6029, shininess:6, flatShading:true});
+  const nail  = new THREE.MeshPhongMaterial({color:0xdcd6c0, shininess:60});
+  const cloth = new THREE.MeshLambertMaterial({color:0x5b3a24});
+
+  // 前傾した胴体
+  const torso = new THREE.Group(); torso.position.y = 1.45; torso.rotation.x = 0.28; g.add(torso);
+  const chest = new THREE.Mesh(new THREE.SphereGeometry(0.78,12,10), skin);
+  chest.scale.set(1.05,0.95,0.85); torso.add(chest);
+  const belly = new THREE.Mesh(new THREE.SphereGeometry(0.66,12,10), skin2);
+  belly.position.set(0,-0.62,0.06); belly.scale.set(1.0,0.85,0.95); torso.add(belly);
+  const wrap = new THREE.Mesh(new THREE.CylinderGeometry(0.62,0.66,0.42,10), cloth);
+  wrap.position.set(0,-0.95,0); torso.add(wrap);
+  // 背骨の突起
+  for(let i=0;i<4;i++){
+    const sp = new THREE.Mesh(new THREE.ConeGeometry(0.11,0.3,4), skin2);
+    sp.position.set(0, 0.45-i*0.35, -0.62); sp.rotation.x = -0.9; torso.add(sp);
+  }
+
+  // 首と頭
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.26,0.32,0.3,8), skin);
+  neck.position.set(0,0.72,0.1); torso.add(neck);
+  const head = new THREE.Group(); head.position.set(0,1.0,0.16); head.rotation.x = -0.28; torso.add(head);
+  const skull = new THREE.Mesh(new THREE.SphereGeometry(0.5,14,12), skin);
+  skull.scale.set(0.92,1.0,1.05); head.add(skull);
+  const brow = new THREE.Mesh(new THREE.BoxGeometry(0.86,0.16,0.36), skin2);
+  brow.position.set(0,0.16,0.3); brow.rotation.x = 0.15; head.add(brow);
+  const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.62,0.28,0.5), skin2);
+  jaw.position.set(0,-0.3,0.24); head.add(jaw);
+  const snout = new THREE.Mesh(new THREE.ConeGeometry(0.2,0.34,6), skin);
+  snout.position.set(0,-0.02,0.52); snout.rotation.x = Math.PI/2; head.add(snout);
+  [-0.18,0.18].forEach(ox=>{                       // 牙
+    const t = new THREE.Mesh(new THREE.ConeGeometry(0.075,0.3,6), nail);
+    t.position.set(ox,-0.2,0.42); head.add(t);
+  });
+  [-0.22,0.22].forEach(ox=>{                       // 落ち窪んだ赤い目
+    const e = new THREE.Mesh(new THREE.SphereGeometry(0.1,10,10),
+                new THREE.MeshBasicMaterial({color:0xff3b1f}));
+    e.position.set(ox,0.02,0.4); head.add(e);
+  });
+  [-0.52,0.52].forEach(ox=>{                       // 大きく尖った耳
+    const e = new THREE.Mesh(new THREE.ConeGeometry(0.16,0.85,5), skin2);
+    e.position.set(ox,0.1,-0.02);
+    e.rotation.z = ox>0 ? -1.25 : 1.25; e.rotation.x = -0.35;
+    head.add(e);
+  });
+
+  // 長い腕（右腕は投擲アニメ用に参照を保持）
+  function arm(side){
+    const sh = new THREE.Group(); sh.position.set(side*0.82, 0.42, 0); torso.add(sh);
+    const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.24,0.19,0.9,8), skin);
+    upper.position.y = -0.45; sh.add(upper);
+    const el = new THREE.Group(); el.position.y = -0.9; sh.add(el);
+    const fore = new THREE.Mesh(new THREE.CylinderGeometry(0.19,0.16,0.85,8), skin);
+    fore.position.y = -0.42; el.add(fore);
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.24,10,8), skin2);
+    hand.position.y = -0.9; hand.scale.set(1,0.8,1.1); el.add(hand);
+    for(let i=0;i<3;i++){
+      const c = new THREE.Mesh(new THREE.ConeGeometry(0.05,0.2,5), nail);
+      c.position.set((i-1)*0.13,-1.06,0.1); c.rotation.x = 0.6; el.add(c);
+    }
+    sh.rotation.x = 0.35;
+    return {shoulder:sh, elbow:el};
+  }
+  const armR = arm(1), armL = arm(-1);
+
+  // 短く太い脚
+  [-0.42,0.42].forEach(ox=>{
+    const th = new THREE.Mesh(new THREE.CylinderGeometry(0.3,0.24,0.7,8), skin);
+    th.position.set(ox,0.62,0); g.add(th);
+    const sh2 = new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.2,0.55,8), skin2);
+    sh2.position.set(ox,0.2,0.02); g.add(sh2);
+    const ft = new THREE.Mesh(new THREE.BoxGeometry(0.4,0.2,0.7), skin2);
+    ft.position.set(ox,0.08,0.16); g.add(ft);
+    for(let i=0;i<3;i++){
+      const c = new THREE.Mesh(new THREE.ConeGeometry(0.05,0.18,5), nail);
+      c.position.set(ox+(i-1)*0.12, 0.06, 0.52); c.rotation.x = Math.PI/2; g.add(c);
+    }
+  });
+
+  g.userData = {armR, armL, head, torso};
+  return g;
+}
+const goblin = makeGoblin();
+goblin.position.set(GOBLIN_X, surfaceY(GOBLIN_LV, GOBLIN_X), 0);
+goblin.rotation.y = Math.PI*0.5;
+world.add(goblin);
+
+// ゴール（女の子）＝最上段（7段目）
+const goal = new THREE.Group();
+(function(){
+  const skin  = new THREE.MeshLambertMaterial({color:0xffe3cd});
+  const hair  = new THREE.MeshLambertMaterial({color:0xffd54a});
+  const dress = new THREE.MeshLambertMaterial({color:0xff8fc7});
+  const dress2= new THREE.MeshLambertMaterial({color:0xffc2e0});
+  const gold  = new THREE.MeshPhongMaterial({color:0xffd400, shininess:90});
+
+  // ふんわりドレス
+  const skirt = new THREE.Mesh(new THREE.ConeGeometry(0.62,1.05,16), dress);
+  skirt.position.y = 0.52; goal.add(skirt);
+  const frill = new THREE.Mesh(new THREE.TorusGeometry(0.6,0.09,8,20), dress2);
+  frill.position.y = 0.1; frill.rotation.x = Math.PI/2; goal.add(frill);
+  const top = new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.3,0.4,12), dress2);
+  top.position.y = 1.18; goal.add(top);
+  const sash = new THREE.Mesh(new THREE.TorusGeometry(0.27,0.05,8,16), gold);
+  sash.position.y = 1.0; sash.rotation.x = Math.PI/2; goal.add(sash);
+  // 腕（肩を基点にしたグループ。手は腕の先端に固定）
+  [-1,1].forEach(sx=>{
+    const shoulder = new THREE.Group();
+    shoulder.position.set(sx*0.28, 1.26, 0.12);
+    // 前方やや上へ、左右に大きく広げる歓迎のポーズ
+    shoulder.rotation.set(-0.50, 0, sx*2.05);
+    const L = 0.62;
+    const a = new THREE.Mesh(new THREE.CylinderGeometry(0.085,0.075,L,10), skin);
+    a.position.y = -L/2; shoulder.add(a);
+    const sl = new THREE.Mesh(new THREE.SphereGeometry(0.12,10,8), dress2);
+    sl.position.y = -0.06; sl.scale.set(1,0.75,1); shoulder.add(sl);   // 袖
+    const h = new THREE.Mesh(new THREE.SphereGeometry(0.11,10,10), skin);
+    h.position.y = -L - 0.06; shoulder.add(h);                        // 手
+    goal.add(shoulder);
+  });
+  // 頭（大きめの二頭身でかわいく）
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.46,16,14), skin);
+  head.position.y = 1.82; head.scale.set(1,0.98,0.95); goal.add(head);
+  // 髪：正面は目の上で切りそろえ、後頭部だけ長く覆う
+  const bob = new THREE.Mesh(new THREE.SphereGeometry(0.5,16,14,0,Math.PI*2,0,Math.PI*0.44), hair);
+  bob.position.y = 1.84; goal.add(bob);
+  // 後ろ髪：頭の後方に寄せた球なので正面には回り込まない（下まで長い）
+  const back = new THREE.Mesh(new THREE.SphereGeometry(0.47,16,14), hair);
+  back.position.set(0, 1.76, -0.16);
+  back.scale.set(1.02, 1.15, 0.72); goal.add(back);
+  const backTip = new THREE.Mesh(new THREE.SphereGeometry(0.34,14,12), hair);
+  backTip.position.set(0, 1.30, -0.20);
+  backTip.scale.set(1.0, 1.1, 0.6); goal.add(backTip);
+  // 前髪（眉の高さに小さな房を3つ）
+  [-0.24,0,0.24].forEach((ox,i)=>{
+    const f = new THREE.Mesh(new THREE.SphereGeometry(i===1?0.16:0.14,10,8), hair);
+    f.position.set(ox, 1.99 - (i===1?0.02:0), 0.30);
+    f.scale.set(1,0.85,0.7); goal.add(f);
+  });
+  // ツインテール
+  [-1,1].forEach(sx=>{
+    const t = new THREE.Mesh(new THREE.SphereGeometry(0.24,12,10), hair);
+    t.position.set(sx*0.52,1.80,-0.06); t.scale.set(0.8,1.5,0.8); goal.add(t);
+    const t2 = new THREE.Mesh(new THREE.SphereGeometry(0.16,10,8), hair);
+    t2.position.set(sx*0.60,1.42,-0.09); goal.add(t2);
+    const rb = new THREE.Mesh(new THREE.TorusGeometry(0.13,0.05,8,14),
+                              new THREE.MeshLambertMaterial({color:0xff5a8a}));
+    rb.position.set(sx*0.46,2.02,-0.02); rb.rotation.y = Math.PI/2; goal.add(rb);
+  });
+  // 大きな瞳・ハイライト・ほっぺ
+  [-0.17,0.17].forEach(ox=>{
+    const e = new THREE.Mesh(new THREE.SphereGeometry(0.093,12,12),
+                             new THREE.MeshBasicMaterial({color:0x3a2a4a}));
+    e.position.set(ox,1.78,0.41); e.scale.set(0.85,1.15,0.6); goal.add(e);
+    const hl = new THREE.Mesh(new THREE.SphereGeometry(0.032,8,8),
+                              new THREE.MeshBasicMaterial({color:0xffffff}));
+    hl.position.set(ox+0.03,1.82,0.46); goal.add(hl);
+    const bl = new THREE.Mesh(new THREE.SphereGeometry(0.075,10,10),
+                              new THREE.MeshBasicMaterial({color:0xff9db5}));
+    bl.position.set(ox*1.9,1.68,0.36); bl.scale.set(1,0.6,0.4); goal.add(bl);
+  });
+  // ティアラ
+  const tiara = new THREE.Mesh(new THREE.TorusGeometry(0.3,0.045,8,18), gold);
+  tiara.position.y = 2.1; tiara.rotation.x = Math.PI/2.2; goal.add(tiara);
+  const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.09),
+                             new THREE.MeshPhongMaterial({color:0x66e0ff, shininess:100}));
+  gem.position.set(0,2.18,0.26); goal.add(gem);
+  // 足元の光の輪
+  const halo = new THREE.Mesh(new THREE.TorusGeometry(0.9,0.05,8,24),
+                              new THREE.MeshBasicMaterial({color:0xfff2a0}));
+  halo.position.y = 0.06; halo.rotation.x = Math.PI/2; goal.add(halo);
+})();
+goal.position.set(GOAL_X, surfaceY(LEVELS-1, GOAL_X), 0);
+world.add(goal);
+
+/* ============ プレイヤー ============ */
+const player = new THREE.Group();
+(function(){
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.75,0.85,0.6), new THREE.MeshLambertMaterial({color:0x2f7bff}));
+  body.position.y=0.65; player.add(body);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.36,12,12), new THREE.MeshLambertMaterial({color:0xffe0bd}));
+  head.position.y=1.4; player.add(head);
+  const cap = new THREE.Mesh(new THREE.SphereGeometry(0.38,12,8,0,Math.PI*2,0,Math.PI/2), new THREE.MeshLambertMaterial({color:0xff2d2d}));
+  cap.position.y=1.45; player.add(cap);
+  const brim = new THREE.Mesh(new THREE.BoxGeometry(0.34,0.08,0.5), new THREE.MeshLambertMaterial({color:0xff2d2d}));
+  brim.position.set(0.36,1.42,0); player.add(brim);
+  [-0.22,0.22].forEach(oz=>{
+    const lg = new THREE.Mesh(new THREE.BoxGeometry(0.26,0.5,0.26), new THREE.MeshLambertMaterial({color:0x1b3d8f}));
+    lg.position.set(0,0.0,oz); player.add(lg);
+  });
+})();
+player.add(hammerMap);
+world.add(player);
+
+/* ============ 鉄球 ============ */
+const ballGeo = new THREE.SphereGeometry(0.5,16,16);
+const ballMat = new THREE.MeshPhongMaterial({color:0x9aa4b0, shininess:90, specular:0xffffff});
+const balls = [];
+function spawnBall(){
+  // ゴブリンの手から放物線を描いて投げ出される
+  const m = new THREE.Mesh(ballGeo, ballMat); world.add(m);
+  const d = ballDir(GOBLIN_LV);
+  const sx = GOBLIN_X + d*0.9;
+  balls.push({mesh:m, lv:GOBLIN_LV, x:sx,
+              y:surfaceY(GOBLIN_LV,sx)+3.0,
+              dir:d, falling:true, vy:1.5, vx:d*(BALL_SP+1.6), scored:false});
+}
+
+/* ============ 破裂エフェクト ============ */
+const shards = [];
+const shardGeo = new THREE.BoxGeometry(0.16,0.16,0.16);
+const shardMat = new THREE.MeshBasicMaterial({color:0xffd9a0});
+function burst(x,y,z){
+  for(let i=0;i<14;i++){
+    const m = new THREE.Mesh(shardGeo, shardMat.clone());
+    m.position.set(x,y,z||0);
+    m.material.transparent = true;
+    world.add(m);
+    const a = Math.random()*Math.PI*2, sp = 2.5 + Math.random()*3.5;
+    shards.push({mesh:m, vx:Math.cos(a)*sp, vy:1.5+Math.random()*5,
+                 vz:(Math.random()-0.5)*3, life:0.55});
+  }
+}
+function updateShards(dt){
+  for(let i=shards.length-1;i>=0;i--){
+    const s2 = shards[i];
+    s2.life -= dt;
+    if(s2.life<=0){ world.remove(s2.mesh); shards.splice(i,1); continue; }
+    s2.vy -= GRAV*dt*0.6;
+    s2.mesh.position.x += s2.vx*dt;
+    s2.mesh.position.y += s2.vy*dt;
+    s2.mesh.position.z += s2.vz*dt;
+    s2.mesh.rotation.x += dt*10; s2.mesh.rotation.y += dt*8;
+    s2.mesh.material.opacity = Math.max(0, s2.life/0.55);
+    s2.mesh.scale.setScalar(0.4 + s2.life);
+  }
+}
+
+/* ============ 状態 ============ */
+let S;
+const msg = document.getElementById('msg');
+const hud = document.getElementById('hud');
+const hammerBar = document.getElementById('hammerBar');
+const hammerFill = document.getElementById('hammerFill');
+
+function reset(full){
+  if(full===undefined) full = true;
+  balls.forEach(b=>world.remove(b.mesh)); balls.length=0;
+  shards.forEach(s2=>world.remove(s2.mesh)); shards.length=0;
+  pickups.forEach(p=>{ p.alive=true; p.mesh.visible=true; });
+  const keepLives = S ? S.lives : 3, keepScore = S ? S.score : 0;
+  S = {
+    lv:0, x:X_MIN+1, y:surfaceY(0,X_MIN+1), z:0, face:1,
+    yawT:0, yaw:0,
+    mode:'ground', vy:0, lvLo:0, ladderX:0,
+    lives: full? 3 : keepLives, score: full? 0 : keepScore,
+    bonus:5000, timer:0, spawnT:1.4, over:false, clear:false,
+    invul:0, hammer:0, blink:false, throwAnim:0
+  };
+  msg.textContent='';
+}
+
+const keys = {};
+addEventListener('keydown', e=>{
+  keys[e.code]=true;
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].indexOf(e.code)>=0) e.preventDefault();
+  if(S && !e.repeat){
+    if(e.code==='ArrowLeft')  S.yawT += Math.PI;
+    if(e.code==='ArrowRight') S.yawT -= Math.PI;
+  }
+  if(e.code==='KeyR') reset(true);
+});
+addEventListener('keyup', e=>{ keys[e.code]=false; });
+
+/* ---- ゲームオーバー／クリア後は画面タップでリスタート ---- */
+addEventListener('pointerdown', ()=>{ if(S && (S.over || S.clear)) reset(true); });
+
+/* ---- 画面上のタッチボタン ---- */
+(function setupPad(){
+  const pad = document.getElementById('pad');
+  const isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+  if(isTouch) pad.classList.add('on');
+
+  // 押している間だけ true になるボタン
+  function hold(id, code){
+    const el = document.getElementById(id);
+    const on  = e=>{ e.preventDefault(); keys[code]=true;  el.classList.add('press'); };
+    const off = e=>{ e.preventDefault(); keys[code]=false; el.classList.remove('press'); };
+    el.addEventListener('pointerdown', on);
+    ['pointerup','pointercancel','pointerleave'].forEach(ev=>el.addEventListener(ev, off));
+  }
+  hold('bFwd','ArrowUp');
+  hold('bBack','ArrowDown');
+  hold('bJump','Space');
+
+  // 押した瞬間に1回だけ実行するボタン
+  function tap(id, fn){
+    const el = document.getElementById(id);
+    el.addEventListener('pointerdown', e=>{
+      e.preventDefault(); el.classList.add('press'); fn();
+    });
+    ['pointerup','pointercancel','pointerleave'].forEach(ev=>
+      el.addEventListener(ev, ()=>el.classList.remove('press')));
+  }
+  tap('bTurnL', ()=>{ if(S) S.yawT += Math.PI; });
+  tap('bTurnR', ()=>{ if(S) S.yawT -= Math.PI; });
+  // 階段：取り付きは一瞬 Shift を立てるだけ
+  tap('bLad', ()=>{ keys.ShiftLeft = true; setTimeout(()=>{ keys.ShiftLeft = false; }, 120); });
+})();
+
+function setFacing(dir){
+  const target = (dir>0) ? 0 : Math.PI, two = Math.PI*2;
+  let d = (target - S.yawT) % two;
+  if(d >  Math.PI) d -= two;
+  if(d < -Math.PI) d += two;
+  S.yawT += d;
+}
+
+function ladderAt(lv, x, up){
+  for(const L of LADDERS){
+    const from = up ? L.lv : L.lv+1;
+    if(from===lv && Math.abs(L.x - x) < 0.7) return L;
+  }
+  return null;
+}
+
+/* ============ 更新 ============ */
+function update(dt){
+  if(S.over || S.clear) return;
+
+  S.timer += dt;
+  S.bonus = Math.max(0, 5000 - Math.floor(S.timer)*100);
+  if(S.invul>0)  S.invul  -= dt;
+  if(S.hammer>0) S.hammer -= dt;
+
+  S.face = Math.round(Math.cos(S.yawT)) || S.face;
+  S.yaw += (S.yawT - S.yaw) * Math.min(1, dt*10);
+
+  updateShards(dt);
+  S.spawnT -= dt;
+  if(S.spawnT<=0){ spawnBall(); S.throwAnim = 1;
+    S.spawnT = SPAWN_MIN + Math.random()*(SPAWN_MAX-SPAWN_MIN); }
+
+  /* --- プレイヤー --- */
+  if(S.mode==='climb'){
+    S.x = S.ladderX;
+    if(keys.ArrowUp)   S.y += CLIMB_SP * dt;
+    if(keys.ArrowDown) S.y -= CLIMB_SP * dt;
+    const yLo = surfaceY(S.lvLo, S.x), yHi = surfaceY(S.lvLo+1, S.x);
+    if(S.y >= yHi){ S.y=yHi; S.lv=S.lvLo+1; S.mode='ground';
+      setFacing(S.lv===LEVELS-1 ? Math.sign(GOAL_X - S.x) : playerDir(S.lv)); }
+    else if(S.y <= yLo){ S.y=yLo; S.lv=S.lvLo; S.mode='ground'; setFacing(playerDir(S.lv)); }
+  } else {
+    if(S.mode==='ground' && (keys.ShiftLeft || keys.ShiftRight)){
+      const up = ladderAt(S.lv, S.x, true);
+      const dn = up ? null : ladderAt(S.lv, S.x, false);
+      if(up){ S.mode='climb'; S.lvLo=up.lv;   S.ladderX=up.x; S.y=surfaceY(up.lv,up.x)+0.05; }
+      else if(dn){ S.mode='climb'; S.lvLo=dn.lv; S.ladderX=dn.x; S.y=surfaceY(dn.lv+1,dn.x)-0.05; }
+    }
+  }
+  if(S.mode!=='climb'){
+    let move = 0;
+    if(keys.ArrowUp) move = 1; else if(keys.ArrowDown) move = -1;
+    S.x += move * S.face * SPEED * dt;
+    S.x = Math.max(xMinOf(S.lv), Math.min(xMaxOf(S.lv), S.x));
+    if(keys.Space && S.mode==='ground'){ S.mode='air'; S.vy = JUMP_V; }
+    if(S.mode==='air'){
+      S.vy -= GRAV*dt; S.y += S.vy*dt;
+      const g = surfaceY(S.lv, S.x);
+      if(S.y <= g){ S.y = g; S.vy=0; S.mode='ground'; }
+    } else {
+      S.y = surfaceY(S.lv, S.x);       // 傾斜に沿って歩く
+    }
+  }
+
+  /* --- ハンマー取得 --- */
+  pickups.forEach(p=>{
+    if(!p.alive) return;
+    if(p.lv===S.lv && Math.abs(p.x-S.x)<0.9 && Math.abs(S.y-surfaceY(p.lv,p.x))<1.6){
+      p.alive=false; p.mesh.visible=false;
+      S.hammer = HAMMER_TIME; S.score += 100;
+    }
+    p.mesh.rotation.y += dt*2;
+    p.mesh.position.y = surfaceY(p.lv,p.x) + 0.3 + Math.sin(S.timer*3)*0.12;
+  });
+
+  const swinging = S.hammer > 0;
+  const swing = Math.sin(S.timer*22);   // 振り速度2倍
+  hammerFP.visible = swinging;
+  hammerMap.visible = swinging;
+  if(swinging){
+    hammerFP.rotation.x = -0.5 + swing*0.85;
+    hammerFP.rotation.z = 0.25;
+    hammerMap.rotation.z = -0.6 + swing*0.9;
+  }
+  const bLad = document.getElementById('bLad');
+  if(bLad) bLad.innerHTML = (S.mode==='climb') ? '昇降中<br>▲▼で移動' : '階段<br>取付き';
+  hammerBar.style.display = swinging ? 'block' : 'none';
+  hammerFill.style.width = Math.max(0,(S.hammer/HAMMER_TIME)*100) + '%';
+
+  /* --- 鉄球 --- */
+  for(let i=balls.length-1;i>=0;i--){
+    const b = balls[i];
+    if(b.falling){
+      b.vy -= GRAV*dt; b.y += b.vy*dt;
+      if(b.vx){ b.x += b.vx*dt; b.mesh.rotation.z -= Math.sign(b.vx)*dt*8; }
+      const ty = surfaceY(b.lv, b.x)+0.5;
+      if(b.y <= ty){ b.y=ty; b.vy=0; b.vx=0; b.falling=false; b.dir=ballDir(b.lv); }
+    } else {
+      b.x += b.dir * BALL_SP * dt;
+      b.y  = surfaceY(b.lv, b.x)+0.5;
+      if(b.x > xMaxOf(b.lv)+0.5 || b.x < xMinOf(b.lv)-0.5){
+        if(b.lv===0){ world.remove(b.mesh); balls.splice(i,1); continue; }
+        b.lv--; b.falling=true; b.vy=0;
+        b.x = Math.max(xMinOf(b.lv)-0.3, Math.min(xMaxOf(b.lv)+0.3, b.x));
+      }
+    }
+    b.mesh.position.set(b.x, b.y, 0);
+    b.mesh.rotation.z -= b.dir * dt * 6;
+
+    // ハンマーで破壊
+    if(swinging && b.lv===S.lv && Math.abs(b.x-S.x)<1.5 && Math.abs(b.y-(S.y+0.6))<1.6){
+      burst(b.x, b.y, 0);
+      world.remove(b.mesh); balls.splice(i,1); S.score += 300; continue;
+    }
+    // 跳び越しボーナス
+    if(!b.scored && b.lv===S.lv && Math.abs(b.x-S.x)<0.8 && S.y-surfaceY(S.lv,S.x) > 0.9){
+      b.scored = true; S.score += 100;
+    }
+    // 被弾
+    if(!swinging && S.invul<=0 && Math.abs(b.x-S.x)<0.75 && Math.abs(b.y-(S.y+0.7))<0.9){
+      S.lives--;
+      if(S.lives<=0){ S.over=true; msg.innerHTML='GAME OVER<small>画面タップ（またはRキー）でリスタート</small>'; }
+      else { reset(false); S.invul=1.5; }
+      return;
+    }
+  }
+
+  /* --- ゴール --- */
+  if(S.lv===LEVELS-1 && Math.abs(S.x-GOAL_X)<1.0){
+    S.clear = true; S.score += S.bonus;
+    msg.innerHTML='STAGE CLEAR!<small>画面タップ（またはRキー）でリスタート</small>';
+  }
+
+  /* --- 反映 --- */
+  const targetZ = (S.mode==='climb') ? LADDER_Z : 0;
+  S.z += (targetZ - S.z) * Math.min(1, dt*8);
+  player.position.set(S.x, S.y, S.z);
+  player.rotation.y = S.yaw + Math.PI/2;
+  S.blink = (S.invul>0 && Math.floor(S.invul*12)%2===0);
+
+  // 投擲モーション：発生直前に振りかぶり、直後に振り下ろす
+  (function(){
+    const ud = goblin.userData;
+    const t  = S.spawnT;                       // 次の発生までの残り秒
+    let wind = 0;                              // 0=待機 1=振りかぶり
+    if(t < 0.7)      wind = 1 - t/0.7;         // 振りかぶり
+    S.throwAnim = Math.max(0, (S.throwAnim||0) - dt*4);
+    const rec = S.throwAnim;                   // 投げ直後の残身
+    ud.armR.shoulder.rotation.x = 0.35 - wind*2.5 + rec*3.0;
+    ud.armR.elbow.rotation.x    = -wind*1.1 + rec*1.4;
+    ud.armL.shoulder.rotation.x = 0.35 + wind*0.5 - rec*0.6;
+    ud.torso.rotation.x = 0.28 - wind*0.18 + rec*0.3;
+    ud.head.rotation.y  = Math.sin(S.timer*1.4)*0.25;
+    goblin.position.y = surfaceY(GOBLIN_LV,GOBLIN_X) + Math.abs(Math.sin(S.timer*3))*0.08;
+  })();
+  // 自転はさせず、常にプレイヤーの方へ向き直る
+  goal.rotation.y = Math.atan2(camera.position.x - GOAL_X,
+                               camera.position.z - goal.position.z);
+
+  const eyeY = S.y + 1.55 + (S.mode==='ground' ? Math.sin(S.timer*10)*0.03 : 0)
+             + (swinging ? Math.abs(swing)*0.05 : 0);
+  const fx = Math.cos(S.yaw), fz = -Math.sin(S.yaw);
+  camera.position.set(S.x + fx*0.45, eyeY, S.z + fz*0.45);
+  const pitch = (S.mode==='climb') ? (keys.ArrowDown && !keys.ArrowUp ? -0.5 : 0.35) : 0;
+  camera.lookAt(S.x + fx*10, eyeY + pitch*10, S.z + fz*10);
+
+  hud.innerHTML =
+    `SCORE <b>${String(S.score).padStart(6,'0')}</b>　`+
+    `BONUS <b>${S.bonus}</b>　`+
+    `残機 <b>${'♥'.repeat(Math.max(0,S.lives))}</b>　`+
+    `FLOOR <b>${S.lv+1}/${LEVELS}</b>`+
+    (swinging ? `　<span style="color:#ffd400">HAMMER ${S.hammer.toFixed(1)}s</span>` : '');
+}
+
+/* ============ 描画 ============ */
+function render(){
+  const W = innerWidth, H = innerHeight;
+  renderer.setScissorTest(false);
+  renderer.setViewport(0,0,W,H); renderer.setScissor(0,0,W,H);
+  renderer.clear();
+  player.visible = false;
+  renderer.render(scene, camera);
+  player.visible = !(S && S.blink);
+
+  const x = W - MAPW - 10, y = H - MAPH - 10;
+  renderer.setScissorTest(true);
+  renderer.setViewport(x,y,MAPW,MAPH); renderer.setScissor(x,y,MAPW,MAPH);
+  renderer.setClearColor(0x243055,1); renderer.clear();
+  const savedFog = scene.fog; scene.fog = null;
+  mapLight.visible = true; mapAmb.intensity = 1.1;
+  const fpWas = hammerFP.visible; hammerFP.visible = false;   // 手元は俯瞰に映さない
+  renderer.render(scene, mapCam);
+  hammerFP.visible = fpWas;
+  mapLight.visible = false; mapAmb.intensity = 0.0;
+  scene.fog = savedFog;
+  renderer.setClearColor(0x05030c,1);
+  renderer.setScissorTest(false);
+}
+
+addEventListener('resize', ()=>{
+  camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+reset(true);
+let last = performance.now();
+(function loop(now){
+  requestAnimationFrame(loop);
+  const dt = Math.min(0.05, (now-last)/1000); last = now;
+  update(dt); render();
+})(performance.now());
+
+})();
+</script>
+</body>
+</html>

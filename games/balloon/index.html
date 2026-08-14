@@ -1,0 +1,1358 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>ふわり — うちわ飛行</title>
+<style>
+  :root{
+    --ink:#20303f;
+    --sky:#bfe6ff;
+    --cream:#fff8ec;
+    --coral:#ff8a6b;
+    --mint:#7fd8c0;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden;background:#bfe6ff;
+    font-family:"Hiragino Maru Gothic ProN","Yu Gothic UI","Zen Maru Gothic",system-ui,sans-serif;
+    color:var(--ink);-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
+  #view{position:fixed;top:0;left:0;width:100%;height:100%;display:block}
+
+  /* ---- HUD ---- */
+  .hud{position:fixed;pointer-events:none;z-index:5}
+
+  #fruits{left:50%;transform:translateX(-50%);top:12px;display:flex;gap:6px;align-items:center;
+    background:rgba(255,248,236,.82);border:3px solid var(--ink);border-radius:999px;
+    padding:6px 14px;box-shadow:0 5px 0 rgba(32,48,63,.18)}
+  #fruits .fr{font-size:22px;filter:grayscale(1);opacity:.32;transition:.25s}
+  #fruits .fr.got{filter:none;opacity:1;transform:scale(1.12)}
+  #fruits .cnt{font-size:12px;font-weight:800;margin-left:6px;opacity:.7}
+
+  #balloonHud{left:50%;transform:translateX(-50%);top:64px;display:flex;gap:8px;
+    font-size:20px;line-height:1;text-shadow:0 2px 0 rgba(255,255,255,.7)}
+  #balloonHud .bl{color:#ff7aa8}
+  #balloonHud .bl:last-child{color:#e8c33a}
+  #balloonHud .bl.pop{color:#8c98a4;opacity:.5}
+
+  #msg{left:50%;transform:translateX(-50%);top:104px;opacity:0;transition:opacity .3s;
+    background:rgba(32,48,63,.85);color:#fff8ec;border-radius:999px;padding:7px 18px;
+    font-size:14px;font-weight:800;white-space:nowrap}
+
+  #result{position:fixed;inset:0;z-index:25;display:none;place-items:center;
+    background:radial-gradient(120% 90% at 50% 30%,rgba(255,248,236,.55),rgba(60,110,150,.8))}
+  #result.clear{background:radial-gradient(120% 90% at 50% 30%,rgba(255,250,220,.6),rgba(255,180,90,.75))}
+  #resultCard{text-align:center;background:var(--cream);border:4px solid var(--ink);
+    border-radius:26px;padding:26px 30px;box-shadow:0 10px 0 rgba(32,48,63,.25);max-width:360px;margin:16px}
+  #resultCard h2{font-size:26px;letter-spacing:.05em;margin-bottom:8px}
+  #resultCard p{font-size:13.5px;line-height:1.6;opacity:.8;margin-bottom:18px}
+  #retry{font:inherit;font-size:16px;font-weight:800;cursor:pointer;background:var(--coral);color:#fff;
+    border:3px solid var(--ink);border-radius:999px;padding:10px 30px;box-shadow:0 5px 0 rgba(32,48,63,.35)}
+
+  #alt{left:18px;bottom:18px;width:64px;height:190px;
+    background:rgba(255,248,236,.72);border:3px solid var(--ink);border-radius:32px;
+    box-shadow:0 6px 0 rgba(32,48,63,.18);overflow:hidden}
+  #altFill{position:absolute;left:0;right:0;bottom:0;height:0%;
+    background:linear-gradient(180deg,#ffd9a0,#7fd8c0);transition:height .08s linear}
+  #altTxt{position:absolute;left:0;right:0;bottom:8px;text-align:center;
+    font-size:15px;font-weight:800;letter-spacing:.02em;text-shadow:0 1px 0 #fff}
+  #altLabel{position:absolute;left:0;right:0;top:8px;text-align:center;font-size:11px;opacity:.65;font-weight:700}
+
+  #flap{right:18px;bottom:18px;width:78px;height:78px;border-radius:50%;
+    border:3px solid var(--ink);background:rgba(255,248,236,.72);
+    box-shadow:0 6px 0 rgba(32,48,63,.18);display:grid;place-items:center}
+  #flapRing{position:absolute;inset:6px;border-radius:50%;
+    background:conic-gradient(var(--coral) 0turn, rgba(0,0,0,0) 0turn)}
+  #flapTxt{position:relative;font-size:12px;font-weight:800;text-align:center;line-height:1.25}
+
+  /* ---- バーチャルスティック（スマホ／画面左半分） ---- */
+  #stick{position:fixed;z-index:6;display:none;width:132px;height:132px;border-radius:50%;
+    border:3px solid rgba(32,48,63,.75);background:rgba(255,248,236,.42);
+    box-shadow:0 4px 0 rgba(32,48,63,.14);touch-action:none;pointer-events:none;
+    transform:translate(-50%,-50%);opacity:0;transition:opacity .16s}
+  #stick.on{opacity:1}
+  #stick::before,#stick::after{content:"";position:absolute;background:rgba(32,48,63,.16)}
+  #stick::before{left:12%;right:12%;top:50%;height:2px}
+  #stick::after{top:12%;bottom:12%;left:50%;width:2px}
+  #knob{position:absolute;left:50%;top:50%;width:58px;height:58px;border-radius:50%;
+    transform:translate(-50%,-50%);background:var(--cream);border:3px solid var(--ink);
+    box-shadow:0 3px 0 rgba(32,48,63,.3)}
+  body.touch #flap{pointer-events:auto}
+  body.touch #stick{display:block}
+
+  #help{left:50%;transform:translateX(-50%);bottom:16px;
+    background:rgba(255,248,236,.8);border:2px solid var(--ink);border-radius:999px;
+    padding:7px 16px;font-size:12.5px;font-weight:700;letter-spacing:.02em;white-space:nowrap}
+  #help b{color:#e1603f}
+
+
+
+  #start{position:fixed;inset:0;z-index:20;display:grid;place-items:center;
+    background:radial-gradient(120% 90% at 50% 20%,rgba(255,248,236,.5),rgba(120,190,235,.75));
+    backdrop-filter:blur(2px)}
+  #card{text-align:center;background:var(--cream);border:4px solid var(--ink);
+    border-radius:28px;padding:30px 34px 26px;box-shadow:0 12px 0 rgba(32,48,63,.2);max-width:420px}
+  #card h1{font-size:30px;letter-spacing:.06em;margin-bottom:2px}
+  #card .sub{font-size:12.5px;opacity:.6;font-weight:700;margin-bottom:18px;letter-spacing:.14em}
+  #card .lead{font-size:12.5px;line-height:1.7;text-align:left;margin-bottom:16px;
+    background:#fff;border:2px dashed rgba(32,48,63,.3);border-radius:14px;padding:10px 12px}
+  #card .lead b{color:#e1603f}
+  #card dl{display:grid;grid-template-columns:auto 1fr;gap:7px 14px;
+    text-align:left;font-size:13.5px;font-weight:700;margin-bottom:20px}
+  #card dt{background:var(--ink);color:var(--cream);border-radius:7px;padding:2px 9px;
+    font-size:12px;text-align:center;white-space:nowrap}
+  #card dd{opacity:.8;align-self:center}
+  #go{font:inherit;font-size:17px;font-weight:800;cursor:pointer;
+    background:var(--coral);color:#fff;border:3px solid var(--ink);border-radius:999px;
+    padding:11px 40px;box-shadow:0 5px 0 rgba(32,48,63,.35);letter-spacing:.08em}
+  #go:active{transform:translateY(3px);box-shadow:0 2px 0 rgba(32,48,63,.35)}
+  .tiny{margin-top:12px;font-size:11px;opacity:.5;font-weight:700}
+  @media (max-width:520px){ #help{display:none} #card{margin:16px;padding:24px} }
+
+  /* 横画面（画面が低い）：横に広げて2カラムにし、全体が収まるようにする */
+  @media (orientation:landscape) and (max-height:560px){
+    #start{align-items:center;padding:8px}
+    #card{max-width:min(94vw,860px);width:94vw;padding:14px 20px;border-radius:20px;
+      display:grid;grid-template-columns:1fr 1fr;grid-template-areas:
+        "title lead" "list lead" "btn  lead";
+      column-gap:18px;row-gap:6px;align-items:start;max-height:calc(100vh - 16px);overflow:auto}
+    #card h1{grid-area:title;font-size:22px;margin:0}
+    #card .sub{grid-area:title;align-self:end;font-size:10px;margin:0;
+      position:relative;top:24px;letter-spacing:.1em}
+    #card .lead{grid-area:lead;margin:0;font-size:12px;line-height:1.6;align-self:stretch}
+    #card dl{grid-area:list;margin:14px 0 6px;gap:4px 10px;font-size:12px}
+    #card dt{font-size:11px;padding:1px 7px}
+    #go{grid-area:btn;justify-self:start;padding:8px 28px;font-size:15px}
+    #card .tiny{grid-area:lead;align-self:end;margin-top:6px;font-size:10px;line-height:1.5}
+  }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div class="hud" id="fruits"></div>
+<div class="hud" id="balloonHud"></div>
+<div class="hud" id="msg"></div>
+<div id="result"><div id="resultCard">
+  <h2 id="resultTitle"></h2>
+  <p id="resultText"></p>
+  <button id="retry">もう一度あそぶ</button>
+</div></div>
+<div class="hud" id="alt"><div id="altFill"></div><div id="altLabel">こうど</div><div id="altTxt">0.0</div></div>
+<div id="stick"><div id="knob"></div></div>
+<div class="hud" id="flap"><div id="flapRing"></div><div id="flapTxt">SPACE<br>あおぐ</div></div>
+<div class="hud" id="help">前後 <b>W / S</b> ／ 旋回 <b>A / D</b> ／ あおぐ <b>SPACE</b> ／ 落下ゆっくり <b>Shift</b> ／ 視点 <b>マウス</b></div>
+
+<div id="start"><div id="card">
+  <h1>ふわり</h1>
+  <div class="sub">UCHIWA FLIGHT — 風船2つで空へ</div>
+  <p class="lead">浮かぶ島のフルーツを<b>5つ</b>あつめると<b>次のステージ</b>へ進めます。<br>足場の裏の<b>岩</b>にぶつかると風船が割れ、2つとも割れると飛べません。<br>水面に近づくと<b>大きな魚</b>に飲み込まれます。</p>
+  <dl>
+    <dt>W / S</dt><dd>前に進む・後ろに下がる</dd>
+    <dt>A / D</dt><dd>左に旋回・右に旋回</dd>
+    <dt>SPACE</dt><dd>うちわを扇いで浮く（連打で上昇）</dd>
+    <dt>Shift</dt><dd>うちわを広げてゆっくり落ちる</dd>
+    <dt>マウス</dt><dd>視点をずらす（離すと真後ろに戻る／ホイールで寄り引き）</dd>
+  </dl>
+  <button id="go">はじめる</button>
+  <div class="tiny">クリックでマウス操作が有効になります／Escで解除<br>
+  スマホ：左半分のスティック＝上で前進／下で後退／左右で旋回、右半分は触れている間あおぐ＋ドラッグで視点</div>
+</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+'use strict';
+
+// ============================================================
+//  基本セットアップ
+// ============================================================
+const canvas = document.getElementById('view');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xbfe6ff);
+scene.fog = new THREE.Fog(0xcfeeff, 42, 96);
+
+const camera = new THREE.PerspectiveCamera(56, 1, 0.1, 400);
+
+// ---- ライト（トゥーン向けに影は柔らかく） ----
+const sun = new THREE.DirectionalLight(0xfff3dd, 1.05);
+sun.position.set(16, 26, 12);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024,1024);
+const S = 34;
+sun.shadow.camera.left=-S; sun.shadow.camera.right=S;
+sun.shadow.camera.top=S;   sun.shadow.camera.bottom=-S;
+sun.shadow.camera.far = 90;
+sun.shadow.bias = -0.0009;
+scene.add(sun);
+scene.add(new THREE.HemisphereLight(0xdff2ff, 0x86b06a, 0.72));
+
+// ============================================================
+//  トゥーンマテリアル（2〜3段のグラデーションマップ）
+// ============================================================
+function gradMap(steps){
+  // WebGL2 では LuminanceFormat が使えないため RGBA で作る
+  const d = new Uint8Array(steps*4);
+  for(let i=0;i<steps;i++){
+    const v = Math.round(120 + (135*i)/(steps-1));
+    d[i*4] = d[i*4+1] = d[i*4+2] = v; d[i*4+3] = 255;
+  }
+  const t = new THREE.DataTexture(d, steps, 1, THREE.RGBAFormat);
+  t.minFilter = t.magFilter = THREE.NearestFilter;
+  t.generateMipmaps = false;
+  t.needsUpdate = true;
+  return t;
+}
+const G3 = gradMap(3);
+
+function toon(color, opts){
+  opts = opts || {};
+  const m = new THREE.MeshToonMaterial({color:color, gradientMap:G3});
+  if(opts.transparent){ m.transparent = true; m.opacity = opts.opacity!=null?opts.opacity:1; }
+  if(opts.side) m.side = opts.side;
+  return m;
+}
+const OUTLINE_MAT = new THREE.MeshBasicMaterial({color:0x223040, side:THREE.BackSide});
+
+// メッシュに輪郭線（背面法）を付ける
+function outline(mesh, thick){
+  thick = thick==null?0.045:thick;
+  const o = new THREE.Mesh(mesh.geometry, OUTLINE_MAT);
+  const box = new THREE.Box3().setFromBufferAttribute(mesh.geometry.attributes.position);
+  const size = box.getSize(new THREE.Vector3());
+  o.scale.set(1+thick/Math.max(size.x,0.15), 1+thick/Math.max(size.y,0.15), 1+thick/Math.max(size.z,0.15));
+  o.position.copy(mesh.position);
+  o.rotation.copy(mesh.rotation);
+  o.renderOrder = -1;
+  mesh.parent.add(o);
+  return o;
+}
+// 生成＋親追加＋輪郭をまとめて
+function part(parent, geo, mat, pos, rot, ol){
+  const m = new THREE.Mesh(geo, mat);
+  if(pos) m.position.fromArray(pos);
+  if(rot) m.rotation.fromArray(rot);
+  m.castShadow = true;
+  parent.add(m);
+  if(ol !== false) outline(m, ol||0.045);
+  return m;
+}
+
+// ============================================================
+//  箱庭フィールド（狭め：おおむね 52×52、高さ 26 まで）
+// ============================================================
+const LIMIT = { xz: 24, y: 26 };
+const world = new THREE.Group(); scene.add(world);
+
+// ---- 全ステージ共通のルール設定 ----
+const RULES = {
+  balloons: 2,            // 風船の数。全部割れると飛べなくなる
+  fruitsToClear: 5,       // 集めるとステージクリア
+  fishTriggerH: 3.4,      // 水面からこの高さより近づくと魚が現れる（キャラの全高）
+  fishStrike: 1.3,        // 魚が飛びかかるまでの時間(s)
+  fishBite: 1.1           // この距離まで来られると飲み込まれる
+};
+
+const START = new THREE.Vector3(0, 0, 8);   // 開始位置
+const GRASS_R = 10 * Math.sqrt(0.15);        // 草地：面積を元の15%に（半径 約3.9）
+const WATER_Y = -0.25;
+
+// ---- 水面 ----
+const waterMat = toon(0x4fc3e8);
+const water = new THREE.Mesh(new THREE.RingGeometry(0.2, 46, 64, 6), waterMat);
+water.rotation.x = -Math.PI/2; water.position.y = WATER_Y;
+world.add(water);
+// 波の輪
+const ripples = [];
+for(let i=0;i<3;i++){
+  const r = new THREE.Mesh(new THREE.RingGeometry(GRASS_R+1.5+i*4, GRASS_R+2.1+i*4, 48),
+    new THREE.MeshBasicMaterial({color:0xbfeeff, transparent:true, opacity:0.35, side:THREE.DoubleSide}));
+  r.rotation.x = -Math.PI/2; r.position.set(START.x, WATER_Y+0.03, START.z);
+  world.add(r); ripples.push(r);
+}
+
+// ---- 草地の島（開始位置まわり） ----
+const ground = new THREE.Mesh(new THREE.CircleGeometry(GRASS_R, 40), toon(0x9ede7d));
+ground.rotation.x = -Math.PI/2;
+ground.position.set(START.x, 0, START.z);
+ground.receiveShadow = true;
+world.add(ground);
+// 砂浜と土台
+const beach = new THREE.Mesh(new THREE.CylinderGeometry(GRASS_R+0.5, GRASS_R+0.1, 0.5, 40), toon(0xf3e2b0));
+beach.position.set(START.x, -0.26, START.z); world.add(beach);
+const isleBase = new THREE.Mesh(new THREE.ConeGeometry(GRASS_R, 7, 40), toon(0xb0855b));
+isleBase.position.set(START.x, -4, START.z); isleBase.rotation.x = Math.PI; world.add(isleBase);
+
+// 海の底（うっすら）
+const seabed = new THREE.Mesh(new THREE.RingGeometry(0.2, 46, 48, 4), toon(0x2f7fa0));
+seabed.rotation.x = -Math.PI/2; seabed.position.y = -6; world.add(seabed);
+
+// 草地の上の木（島の中だけ）
+function tree(x,z,s){
+  const g = new THREE.Group(); g.position.set(START.x+x, 0, START.z+z); g.scale.setScalar(s||1);
+  part(g, new THREE.CylinderGeometry(0.22,0.3,1.6,8), toon(0xa9734a), [0,0.8,0], null, 0.05);
+  part(g, new THREE.SphereGeometry(1.15, 14, 10), toon(0x63bf74), [0,2.2,0], null, 0.06);
+  part(g, new THREE.SphereGeometry(0.8, 12, 9), toon(0x76cf83), [0.6,1.7,0.4], null, 0.05);
+  part(g, new THREE.SphereGeometry(0.7, 12, 9), toon(0x55b268), [-0.55,2.8,-0.2], null, 0.05);
+  g.rotation.y = Math.random()*6.28;
+  world.add(g);
+  return g;
+}
+const K = GRASS_R/10;
+[[-6,2,1.0],[5,-4,1.15],[2,6,0.9]].forEach(t=>tree(t[0]*K, t[1]*K, t[2]*0.62));
+// 岩
+[[-7,-3,0.5],[6,7,0.38],[-2,8,0.42]].forEach(r=>{
+  const m = part(world, new THREE.DodecahedronGeometry(r[2],0), toon(0x9aa3a8),
+    [START.x+r[0]*K, r[2]*0.3, START.z+r[1]*K], [Math.random(),Math.random(),Math.random()], 0.05);
+  m.receiveShadow = true;
+});
+
+// ============================================================
+//  浮遊足場（実体あり／下面は岩＝ぶつかると風船が割れる）＋フルーツ
+// ============================================================
+const platforms = [];
+const fruits = [];
+
+const FRUIT_DEFS = {
+  banana:     {name:'バナナ',   emoji:'🍌', color:0xffd94a},
+  watermelon: {name:'スイカ',   emoji:'🍉', color:0x53b74c},
+  apple:      {name:'リンゴ',   emoji:'🍎', color:0xe8402f},
+  strawberry: {name:'イチゴ',   emoji:'🍓', color:0xf0324b},
+  orange:     {name:'ミカン',   emoji:'🍊', color:0xf9963b}
+};
+
+function makeFruit(kind){
+  const g = new THREE.Group();
+  if(kind === 'banana'){
+    // 三日月状に球を並べる
+    for(let i=0;i<5;i++){
+      const a = -0.6 + i*0.3;
+      const m = part(g, new THREE.SphereGeometry(0.15 - Math.abs(i-2)*0.022, 10, 8), toon(0xffd94a),
+        [Math.sin(a)*0.42, Math.cos(a)*0.42 - 0.42, 0], null, 0.035);
+      m.scale.set(1,1,0.85);
+    }
+    part(g, new THREE.CylinderGeometry(0.035,0.05,0.14,6), toon(0x7a6a3a), [Math.sin(-0.75)*0.44,Math.cos(-0.75)*0.44-0.42,0], [0,0,0.75], 0.03);
+  } else if(kind === 'watermelon'){
+    const m = part(g, new THREE.SphereGeometry(0.34, 16, 12), toon(0x53b74c), [0,0,0], null, 0.05);
+    for(let i=0;i<5;i++){
+      const st = part(g, new THREE.TorusGeometry(0.345, 0.022, 6, 20, Math.PI), toon(0x2f7a34),
+        [0,0,0], [Math.PI/2, 0, i*0.63], false);
+      st.renderOrder = 1;
+    }
+    void m;
+    part(g, new THREE.CylinderGeometry(0.03,0.03,0.1,6), toon(0x6d5a34), [0,0.36,0], null, 0.03);
+  } else if(kind === 'apple'){
+    const a = part(g, new THREE.SphereGeometry(0.28, 16, 12), toon(0xe8402f), [0,0,0], null, 0.05);
+    a.scale.set(1,0.94,1);
+    part(g, new THREE.CylinderGeometry(0.025,0.025,0.16,6), toon(0x6d4a2a), [0,0.3,0], [0,0,0.2], 0.03);
+    const leaf = part(g, new THREE.SphereGeometry(0.1,8,6), toon(0x5ec46a), [0.12,0.34,0], [0,0,0.5], 0.03);
+    leaf.scale.set(1,0.35,0.6);
+  } else if(kind === 'strawberry'){
+    const b = part(g, new THREE.ConeGeometry(0.24, 0.46, 14), toon(0xf0324b), [0,-0.05,0], [Math.PI,0,0], 0.045);
+    b.scale.set(1,1,1);
+    part(g, new THREE.SphereGeometry(0.24, 14, 8, 0, 6.28, 0, 1.1), toon(0xf0324b), [0,0.13,0], null, 0.045);
+    for(let i=0;i<5;i++){
+      const l = part(g, new THREE.SphereGeometry(0.1,8,6), toon(0x5ec46a),
+        [Math.cos(i*1.26)*0.16, 0.25, Math.sin(i*1.26)*0.16], [0,0,0], false);
+      l.scale.set(1,0.25,0.5);
+    }
+  } else {
+    const o = part(g, new THREE.SphereGeometry(0.27, 16, 12), toon(0xf9963b), [0,0,0], null, 0.05);
+    o.scale.set(1,0.88,1);
+    const l = part(g, new THREE.SphereGeometry(0.11,8,6), toon(0x5ec46a), [0.06,0.28,0], null, 0.03);
+    l.scale.set(1,0.3,0.6);
+  }
+  return g;
+}
+
+function platform(x,y,z,r,fruitKind,fruitUnder){
+  const g = new THREE.Group(); g.position.set(x,y,z);
+  // 上面：着地できる草地
+  const top = part(g, new THREE.CylinderGeometry(r, r*0.98, 0.5, 20), toon(0x9ede7d), [0,0,0], null, 0.05);
+  top.receiveShadow = true;
+  // 下面：ゴツゴツした岩（ぶつかると風船が割れる）
+  const rock = new THREE.Group(); rock.position.y = -0.25; g.add(rock);
+  const core = part(rock, new THREE.ConeGeometry(r*0.95, r*1.4, 9), toon(0x8d8f96), [0,-r*0.7,0], [Math.PI,0,0], 0.05);
+  core.geometry.computeVertexNormals();
+  // 岩の突起
+  const spikes = 7 + Math.floor(r);
+  for(let i=0;i<spikes;i++){
+    const a = (i/spikes)*Math.PI*2 + Math.random();
+    const rr = r*(0.35 + Math.random()*0.5);
+    const sz = 0.28 + Math.random()*0.3;
+    const d = part(rock, new THREE.DodecahedronGeometry(sz, 0), toon(i%2 ? 0x7e828a : 0x9aa0a8),
+      [Math.cos(a)*rr, -0.25 - Math.random()*r*0.7, Math.sin(a)*rr],
+      [Math.random()*3, Math.random()*3, Math.random()*3], 0.04);
+    d.castShadow = true;
+  }
+  world.add(g);
+
+  const botY = y - 0.25;                 // 岩の当たり判定の上端
+  const rockDepth = r*1.4;               // 岩の深さ
+  const pf = {x:x, z:z, y:y+0.25, botY:botY, rockBottom:y-0.25-rockDepth, r:r, g:g, hitCd:0};
+  platforms.push(pf);
+
+  // フルーツを上に配置
+  if(fruitKind){
+    const f = makeFruit(fruitKind);
+    // fruitUnder が true なら岩の下側（先端から少し離して）に吊るす
+    if(fruitUnder) f.position.set(x, pf.rockBottom - 0.85, z);
+    else           f.position.set(x, y + 1.35, z);
+    world.add(f);
+    fruits.push({kind:fruitKind, obj:f, taken:false, ph:Math.random()*6.28});
+  }
+  return g;
+}
+platform(-8, 5.5, -6, 2.6, 'apple');
+platform(9, 8.5, 4, 2.2, 'orange');
+platform(0, 12.5, 13, 1.9, 'watermelon');
+platform(-15, 12.4, 12, 2.0*Math.sqrt(3), 'strawberry', true);   // 3番目に高い足場：面積3倍・フルーツは下側
+platform(14, 15, -11, 2.3, 'banana');
+
+// 境界：ふわふわ光る柱＋うっすら壁
+const boundGroup = new THREE.Group(); world.add(boundGroup);
+const postMat = toon(0xfff1c8, {transparent:true, opacity:0.95});
+for(let i=0;i<28;i++){
+  const a = (i/28)*Math.PI*2;
+  const r = LIMIT.xz*1.32;
+  const p = new THREE.Mesh(new THREE.CylinderGeometry(0.14,0.14,3.4,7), postMat);
+  p.position.set(Math.cos(a)*r, 1.7, Math.sin(a)*r);
+  boundGroup.add(p);
+  const k = new THREE.Mesh(new THREE.SphereGeometry(0.3,12,9), toon(0xffb36b));
+  k.position.set(Math.cos(a)*r, 3.6, Math.sin(a)*r);
+  boundGroup.add(k);
+}
+const wallMat = new THREE.MeshBasicMaterial({
+  color:0xffffff, transparent:true, opacity:0.0, side:THREE.DoubleSide, depthWrite:false});
+const wall = new THREE.Mesh(new THREE.CylinderGeometry(LIMIT.xz*1.36, LIMIT.xz*1.36, LIMIT.y+8, 40, 1, true), wallMat);
+wall.position.y = (LIMIT.y+8)/2 - 2; world.add(wall);
+
+// 雲
+const clouds = [];
+for(let i=0;i<16;i++){
+  const c = new THREE.Group();
+  const n = 3 + (i%3);
+  for(let j=0;j<n;j++){
+    const s = 1.4 + Math.random()*1.5;
+    const p = new THREE.Mesh(new THREE.SphereGeometry(s, 12, 9), toon(0xffffff));
+    p.position.set((j-n/2)*1.7 + Math.random(), Math.random()*0.7, Math.random()*1.4);
+    c.add(p);
+  }
+  const ang = Math.random()*6.28, rad = 22 + Math.random()*34;
+  c.position.set(Math.cos(ang)*rad, 9 + Math.random()*20, Math.sin(ang)*rad);
+  scene.add(c);
+  clouds.push({m:c, sp:0.25+Math.random()*0.4, ang:ang, rad:rad, y:c.position.y, ph:Math.random()*6.28});
+}
+
+// ============================================================
+//  プレイヤー（アニメ調 / 背中に風船2つ・両手にうちわ）
+// ============================================================
+const SKIN=0xffdcbb,      // はだ
+      HAIR=0x4b3526,      // 茶色の髪
+      SHIRT=0xef4136,     // 赤いTシャツ
+      SHIRT_D=0xd6362c,   // 袖の陰
+      DENIM=0x4a72a8,     // デニムの半ズボン
+      DENIM_D=0x3a5d8c,
+      SHOE=0xfff6e2, SHOE_D=0x2f80c4;
+
+const player = new THREE.Group();            // 位置＋向き
+const tilt   = new THREE.Group(); player.add(tilt);   // 前後左右の傾き
+const bodyG  = new THREE.Group(); tilt.add(bodyG);    // 上下のはずみ
+scene.add(player);
+
+// 脚
+const legL = new THREE.Group(); legL.position.set(-0.13, 0.50, 0); bodyG.add(legL);
+const legR = new THREE.Group(); legR.position.set( 0.13, 0.50, 0); bodyG.add(legR);
+[legL,legR].forEach(g=>{
+  // 半ズボンの裾
+  part(g, new THREE.CylinderGeometry(0.115,0.125,0.17,10), toon(DENIM), [0,-0.07,0], null, 0.035);
+  // 素足
+  part(g, new THREE.CylinderGeometry(0.082,0.072,0.3,8), toon(SKIN), [0,-0.29,0], null, 0.035);
+  // スニーカー
+  part(g, new THREE.BoxGeometry(0.17,0.12,0.27), toon(SHOE), [0,-0.44,0.04], null, 0.035);
+  part(g, new THREE.BoxGeometry(0.175,0.05,0.275), toon(SHOE_D), [0,-0.485,0.04], null, false);
+});
+
+// デニムの半ズボン（腰）
+part(bodyG, new THREE.CylinderGeometry(0.27,0.24,0.3,14), toon(DENIM), [0,0.56,0], null, 0.05);
+part(bodyG, new THREE.BoxGeometry(0.1,0.045,0.5), toon(DENIM_D), [0,0.68,0], null, false);   // ベルト風
+// 赤いTシャツ
+part(bodyG, new THREE.CylinderGeometry(0.26,0.29,0.52,14), toon(SHIRT), [0,0.85,0], null, 0.05);
+part(bodyG, new THREE.SphereGeometry(0.265,14,10), toon(SHIRT), [0,1.09,0], null, 0.05);
+// 胸の白いワッペン
+const badge = new THREE.Mesh(new THREE.CircleGeometry(0.1,16), new THREE.MeshBasicMaterial({color:0xfff6e2}));
+badge.position.set(0,0.93,0.265); bodyG.add(badge);
+const star = new THREE.Mesh(new THREE.CircleGeometry(0.055,5), new THREE.MeshBasicMaterial({color:SHIRT_D}));
+star.position.set(0,0.93,0.272); bodyG.add(star);
+// 首
+part(bodyG, new THREE.CylinderGeometry(0.1,0.11,0.1,10), toon(SKIN), [0,1.19,0], null, 0.03);
+
+// 頭
+const headG = new THREE.Group(); headG.position.set(0,1.58,0); bodyG.add(headG);
+part(headG, new THREE.SphereGeometry(0.36,20,16), toon(SKIN), [0,0,0], null, 0.05);
+// 髪：短めの男の子。上半分をかぶせて、前髪と寝ぐせを足す
+part(headG, new THREE.SphereGeometry(0.375,18,14,0,6.28,0,1.42), toon(HAIR), [0,0.02,0], null, 0.05);
+part(headG, new THREE.SphereGeometry(0.35,16,12,0,6.28,0,1.1), toon(HAIR), [0,0.03,-0.05], null, 0.05);
+// 前髪の房
+part(headG, new THREE.ConeGeometry(0.1,0.22,6), toon(HAIR), [0.13,0.24,0.27], [1.3,0,-0.3], 0.035);
+part(headG, new THREE.ConeGeometry(0.095,0.2,6), toon(HAIR), [-0.1,0.26,0.27], [1.25,0,0.25], 0.035);
+// アホ毛
+part(headG, new THREE.ConeGeometry(0.055,0.3,6), toon(HAIR), [0.04,0.44,-0.03], [-0.55,0,0.25], 0.03);
+// 耳
+[-1,1].forEach(s=> part(headG, new THREE.SphereGeometry(0.075,10,8), toon(SKIN), [0.35*s,-0.02,0], null, 0.03));
+// 目・ほお（輪郭なし）
+const eyeMat = new THREE.MeshBasicMaterial({color:0x24303c});
+[-1,1].forEach(s=>{
+  const e = new THREE.Mesh(new THREE.SphereGeometry(0.062,12,10), eyeMat);
+  e.position.set(0.135*s, 0.0, 0.315); e.scale.set(0.85,1.3,0.5); headG.add(e);
+  const hl = new THREE.Mesh(new THREE.SphereGeometry(0.023,8,6), new THREE.MeshBasicMaterial({color:0xffffff}));
+  hl.position.set(0.155*s, 0.05, 0.345); headG.add(hl);
+  const bl = new THREE.Mesh(new THREE.SphereGeometry(0.058,10,8), new THREE.MeshBasicMaterial({color:0xffa694, transparent:true, opacity:0.7}));
+  bl.position.set(0.225*s, -0.1, 0.27); bl.scale.set(1,0.6,0.4); headG.add(bl);
+});
+// 口（にっと笑う）
+const mouth = new THREE.Mesh(new THREE.TorusGeometry(0.055,0.017,6,12,Math.PI), eyeMat);
+mouth.position.set(0,-0.13,0.325); mouth.rotation.z = Math.PI; headG.add(mouth);
+// ゴーグル（額）
+part(headG, new THREE.TorusGeometry(0.33,0.038,8,20), toon(0x3f4b5a), [0,0.14,0.02], [0.35,0,0], 0.03);
+
+// 腕＋うちわ
+function makeUchiwa(){
+  // グループ原点＝手が握る位置。柄が上に伸び、その先に面が付く
+  const g = new THREE.Group();
+  const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.032,0.032,0.24,7), toon(0xa9734a));
+  handle.position.y = 0.12; handle.castShadow = true; g.add(handle);
+  outline(handle, 0.028);
+
+  const fanG = new THREE.Group();
+  fanG.position.y = 0.36;          // 柄の先に面
+  g.add(fanG);
+  const face = new THREE.Mesh(new THREE.CircleGeometry(0.25, 20), toon(0xfff6e2, {side:THREE.DoubleSide}));
+  face.castShadow = true; fanG.add(face);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.024, 8, 24), toon(0xd9542f));
+  fanG.add(rim);
+  const mark = new THREE.Mesh(new THREE.CircleGeometry(0.11, 18),
+    new THREE.MeshBasicMaterial({color:0xff7a5c, side:THREE.DoubleSide}));
+  mark.position.z = 0.006; fanG.add(mark);
+  // 面の法線を柄と直交させる（うちわ＝ラケット状）
+  fanG.rotation.y = Math.PI/2;
+  return g;
+}
+const arms = [];
+[-1,1].forEach(s=>{
+  const pivot = new THREE.Group();
+  pivot.position.set(0.30*s, 1.08, 0);
+  bodyG.add(pivot);
+  // 赤い半袖
+  part(pivot, new THREE.CylinderGeometry(0.105,0.09,0.18,10), toon(SHIRT_D), [0.06*s,-0.05,0], [0,0,0.7*s], 0.035);
+  // 素肌の腕（外側へ斜めに伸ばす）
+  part(pivot, new THREE.CylinderGeometry(0.07,0.062,0.44,8), toon(SKIN), [0.22*s,-0.16,0.02], [0,0,0.75*s], 0.035);
+  // 手：胴体からしっかり離した位置
+  const hand = new THREE.Group();
+  hand.position.set(0.50*s, -0.26, 0.08);
+  pivot.add(hand);
+  part(hand, new THREE.SphereGeometry(0.085,12,9), toon(SKIN), [0,0,0], null, 0.035);
+  const fan = makeUchiwa();
+  // 柄を外向き・やや前に傾けて持つ（胴体との干渉を避ける）
+  fan.rotation.set(0, 0, -1.1*s);   // 柄を腕の延長方向へ
+  hand.add(fan);
+  arms.push({pivot:pivot, side:s, fan:fan});
+});
+
+// 背中の風船（ひもは遅れて揺れる）
+const balloonRig = new THREE.Group();
+balloonRig.position.set(0, 1.12, -0.26);
+bodyG.add(balloonRig);
+const balloons = [];
+[[-0.42, 0xff8fb0],[0.42, 0xfff08a]].forEach((b,i)=>{
+  const swing = new THREE.Group();          // 揺れ用
+  balloonRig.add(swing);
+  const str = new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.012,0.9,5), toon(0xfff8ec));
+  str.position.set(b[0]*0.42, 0.45, -0.06); swing.add(str);
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.46, 20, 16), toon(b[1]));
+  ball.position.set(b[0], 1.35, -0.2);
+  ball.scale.set(1, 1.14, 1);
+  ball.castShadow = true;
+  swing.add(ball);
+  outline(ball, 0.05);
+  const knot = new THREE.Mesh(new THREE.ConeGeometry(0.09,0.16,8), toon(b[1]));
+  knot.position.set(b[0], 0.9, -0.2); swing.add(knot);
+  // つやハイライト
+  const shine = new THREE.Mesh(new THREE.SphereGeometry(0.12,10,8), new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.65}));
+  shine.position.set(b[0]-0.16, 1.55, 0.12); shine.scale.set(1,1.5,0.4); swing.add(shine);
+  balloons.push({swing:swing, ph:i*2.1, ball:ball, alive:true, group:swing, color:b[1]});
+});
+
+// 影用の丸（設置感）
+const blob = new THREE.Mesh(new THREE.CircleGeometry(0.55, 20),
+  new THREE.MeshBasicMaterial({color:0x3a5a44, transparent:true, opacity:0.22, depthWrite:false}));
+blob.rotation.x = -Math.PI/2; scene.add(blob);
+
+// ============================================================
+//  大きな魚（水面に近づくと現れる／全ステージ共通）
+// ============================================================
+const fish = new THREE.Group();
+fish.visible = false;
+scene.add(fish);
+const fishBody = new THREE.Group(); fish.add(fishBody);
+(function(){
+  const bodyMesh = part(fishBody, new THREE.SphereGeometry(1.5, 18, 14), toon(0x4a6b8a), [0,0,0], null, 0.08);
+  bodyMesh.scale.set(1, 0.95, 1.9);
+  part(fishBody, new THREE.SphereGeometry(1.25, 16, 12), toon(0xcfe4f2), [0,-0.42,0.2], null, false).scale.set(0.9,0.6,1.7);
+  // 尾びれ
+  const tail = part(fishBody, new THREE.ConeGeometry(1.1, 1.7, 4), toon(0x3c5b78), [0,0.1,-3.0], [Math.PI/2,0,0], 0.06);
+  tail.scale.set(1,1,0.35);
+  // 背びれ・胸びれ
+  part(fishBody, new THREE.ConeGeometry(0.6, 1.3, 4), toon(0x3c5b78), [0,1.25,-0.4], [0.3,0,0], 0.05).scale.set(0.35,1,1);
+  [-1,1].forEach(sd=> part(fishBody, new THREE.ConeGeometry(0.45,0.9,4), toon(0x3c5b78),
+    [1.25*sd,-0.2,0.3], [0,0,-0.9*sd], 0.05).scale.set(0.3,1,1));
+  // 目
+  [-1,1].forEach(sd=>{
+    const e = new THREE.Mesh(new THREE.SphereGeometry(0.24,12,10), new THREE.MeshBasicMaterial({color:0xffffff}));
+    e.position.set(0.85*sd, 0.55, 1.5); fishBody.add(e);
+    const q = new THREE.Mesh(new THREE.SphereGeometry(0.13,10,8), new THREE.MeshBasicMaterial({color:0x1b2530}));
+    q.position.set(0.92*sd, 0.55, 1.68); fishBody.add(q);
+  });
+})();
+// 開く下あご
+const fishJaw = new THREE.Group(); fishJaw.position.set(0, -0.35, 1.5); fishBody.add(fishJaw);
+(function(){
+  const j = part(fishJaw, new THREE.SphereGeometry(1.15, 14, 10, 0, 6.28, 1.6, 1.6), toon(0x3c5b78), [0,0,-0.9], null, 0.06);
+  j.scale.set(1,1,1.4);
+  const mouth = part(fishJaw, new THREE.SphereGeometry(1.0, 14, 10, 0, 6.28, 1.7, 1.5), toon(0xd0505f), [0,0.05,-0.85], null, false);
+  mouth.scale.set(0.92,1,1.3);
+  // 歯
+  for(let i=0;i<9;i++){
+    const a = -1.1 + i*0.275;
+    part(fishJaw, new THREE.ConeGeometry(0.11, 0.3, 5), toon(0xfffdf5),
+      [Math.sin(a)*0.95, 0.12, 0.35 + Math.cos(a)*0.35], [0,0,0], false);
+  }
+})();
+
+const fishState = { mode:'hidden', t:0, target:new THREE.Vector3(), cd:0 };
+
+// ============================================================
+//  ゲーム状態（全ステージ共通ルール）
+// ============================================================
+const game = { over:false, clear:false, reason:'', collected:[] };
+
+// 風船が割れる演出
+const popFx = [];
+for(let i=0;i<6;i++){
+  const m = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6),
+    new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0}));
+  m.visible = false; scene.add(m); popFx.push({m:m, t:0, v:new THREE.Vector3()});
+}
+function burst(pos, color){
+  let n = 0;
+  for(const f of popFx){
+    if(f.m.visible) continue;
+    f.m.visible = true; f.t = 0;
+    f.m.material.color.setHex(color);
+    f.m.position.copy(pos);
+    f.v.set((Math.random()-0.5)*4, Math.random()*3+1, (Math.random()-0.5)*4);
+    if(++n >= 3) break;
+  }
+}
+function aliveBalloons(){ return balloons.filter(b=>b.alive).length; }
+function popBalloon(){
+  const b = balloons.find(x=>x.alive);
+  if(!b) return false;
+  b.alive = false;
+  burst(b.ball.getWorldPosition(new THREE.Vector3()), b.color);
+  b.group.visible = false;
+  return true;
+}
+
+// ============================================================
+//  風のパーティクル（浮遊感の演出）
+// ============================================================
+const WP = 260;
+const wpGeo = new THREE.BufferGeometry();
+const wpPos = new Float32Array(WP*3);
+for(let i=0;i<WP;i++){
+  wpPos[i*3]   = (Math.random()-0.5)*60;
+  wpPos[i*3+1] = Math.random()*30;
+  wpPos[i*3+2] = (Math.random()-0.5)*60;
+}
+wpGeo.setAttribute('position', new THREE.BufferAttribute(wpPos,3));
+const wpMat = new THREE.PointsMaterial({color:0xffffff, size:0.16, transparent:true, opacity:0.5, depthWrite:false});
+const windPts = new THREE.Points(wpGeo, wpMat);
+scene.add(windPts);
+
+// 扇いだ時のリング
+const gustPool = [];
+for(let i=0;i<5;i++){
+  const m = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.045, 8, 22),
+    new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0, depthWrite:false}));
+  m.rotation.x = Math.PI/2; m.visible = false;
+  scene.add(m);
+  gustPool.push({m:m, t:0});
+}
+function gust(){
+  const g = gustPool.find(g=>!g.m.visible) || gustPool[0];
+  g.m.visible = true; g.t = 0;
+  g.m.position.set(player.position.x, player.position.y + 0.35, player.position.z);
+}
+
+// ============================================================
+//  入力
+// ============================================================
+const keys = {};
+addEventListener('keydown', e=>{
+  if(e.code==='Space') e.preventDefault();
+  keys[e.code] = true;
+});
+addEventListener('keyup', e=>{ keys[e.code] = false; });
+// R：カメラを真後ろの初期位置に戻す
+addEventListener('keydown', e=>{
+  if(e.code === 'KeyR'){ camYawOff = 0; pitch = 0.18; camDist = 7.2; camSnap = true; }
+});
+
+let camYawOff = 0, pitch = 0.18, camDist = 7.2;
+let camSnap = true;
+// カメラ位置の基準（height=自機からの高さ, lookH=注視点の高さ）
+const CAM = { height: 2.9, lookH: 2.6 };   // camYawOff は自動的に 0（真後ろ）へ戻る
+let locked = false;
+canvas.addEventListener('click', ()=>{ if(!locked && started) canvas.requestPointerLock(); });
+document.addEventListener('pointerlockchange', ()=>{ locked = document.pointerLockElement === canvas; });
+addEventListener('mousemove', e=>{
+  if(locked){ camYawOff -= e.movementX*0.0026; pitch += e.movementY*0.0022; }
+  else if(dragging){ camYawOff -= (e.clientX-lastX)*0.005; pitch += (e.clientY-lastY)*0.004; lastX=e.clientX; lastY=e.clientY; }
+  camYawOff = Math.max(-1.1, Math.min(1.1, camYawOff));
+  pitch = Math.max(-0.3, Math.min(0.5, pitch));
+});
+let dragging=false, lastX=0, lastY=0;
+canvas.addEventListener('mousedown', e=>{ dragging=true; lastX=e.clientX; lastY=e.clientY; });
+addEventListener('mouseup', ()=>dragging=false);
+addEventListener('wheel', e=>{ camDist = Math.max(4.5, Math.min(14, camDist + e.deltaY*0.005)); }, {passive:true});
+
+// ---- タッチ操作 ----
+//   画面左半分：バーチャルスティック（触った場所に出現、追従）
+//   画面右半分：ドラッグで視点／タップであおぐ
+//   右下のボタン：押しっぱなしで連続あおぎ
+let touchMove = null, touchFlap = false;
+const stickEl = document.getElementById('stick');
+const knobEl  = document.getElementById('knob');
+const STICK_R = 52;                       // ノブの可動半径(px)
+let stickId = null;
+let flapBtnHeld = false;
+const rightTouches = new Map();   // 右半分の指（複数可）
+
+function isTouch(){
+  return matchMedia('(hover:none), (pointer:coarse)').matches || 'ontouchstart' in window;
+}
+if(isTouch()) document.body.classList.add('touch');
+
+function showStick(x, y){
+  stickEl.style.left = x + 'px';
+  stickEl.style.top  = y + 'px';
+  knobEl.style.transform = 'translate(-50%,-50%)';
+  stickEl.classList.add('on');
+}
+function moveKnob(dx, dy){
+  knobEl.style.transform = 'translate(calc(-50% + ' + dx + 'px), calc(-50% + ' + dy + 'px))';
+}
+function hideStick(){
+  stickEl.classList.remove('on');
+  knobEl.style.transform = 'translate(-50%,-50%)';
+}
+
+canvas.addEventListener('touchstart', e=>{
+  document.body.classList.add('touch');
+  for(const t of e.changedTouches){
+    if(t.clientX < innerWidth*0.5){
+      // 左半分：バーチャルスティック（最初の1本だけ）
+      if(stickId !== null) continue;
+      stickId = t.identifier;
+      touchMove = {x0:t.clientX, y0:t.clientY, dx:0, dy:0};
+      showStick(t.clientX, t.clientY);
+    } else {
+      // 右半分：触れている間ずっと扇ぐ＋ドラッグで視点。左スティックと同時に使える
+      rightTouches.set(t.identifier, {x:t.clientX, y:t.clientY});
+      touchFlap = true;
+    }
+  }
+}, {passive:true});
+
+canvas.addEventListener('touchmove', e=>{
+  for(const t of e.changedTouches){
+    if(t.identifier === stickId && touchMove){
+      let dx = t.clientX - touchMove.x0, dy = t.clientY - touchMove.y0;
+      const d = Math.hypot(dx, dy);
+      if(d > STICK_R){ dx *= STICK_R/d; dy *= STICK_R/d; }
+      moveKnob(dx, dy);
+      touchMove.dx = dx/STICK_R;
+      touchMove.dy = dy/STICK_R;
+    } else if(rightTouches.has(t.identifier)){
+      const r = rightTouches.get(t.identifier);
+      camYawOff -= (t.clientX - r.x)*0.006;
+      camYawOff = Math.max(-1.1, Math.min(1.1, camYawOff));
+      pitch += (t.clientY - r.y)*0.003;
+      pitch = Math.max(-0.3, Math.min(0.5, pitch));
+      r.x = t.clientX; r.y = t.clientY;
+    }
+  }
+}, {passive:true});
+
+function endTouch(e){
+  for(const t of e.changedTouches){
+    if(t.identifier === stickId){ stickId = null; touchMove = null; hideStick(); }
+    rightTouches.delete(t.identifier);
+  }
+  if(rightTouches.size === 0 && !flapBtnHeld) touchFlap = false;
+}
+canvas.addEventListener('touchend', endTouch, {passive:true});
+canvas.addEventListener('touchcancel', endTouch, {passive:true});
+
+// あおぐボタン：押しっぱなしで連続
+const flapBtn = document.getElementById('flap');
+function flapBtnDown(e){
+  e.preventDefault(); flapBtnHeld = true; touchFlap = true;
+  try{ flapBtn.setPointerCapture(e.pointerId); }catch(err){}
+}
+function flapBtnUp(){
+  flapBtnHeld = false;
+  if(rightTouches.size === 0) touchFlap = false;
+}
+flapBtn.addEventListener('pointerdown', flapBtnDown);
+flapBtn.addEventListener('pointerup', flapBtnUp);
+flapBtn.addEventListener('pointercancel', flapBtnUp);
+flapBtn.addEventListener('pointerleave', flapBtnUp);
+// タッチでも確実に拾う（pointerイベントが来ない環境の保険）
+flapBtn.addEventListener('touchstart', e=>{ e.preventDefault(); flapBtnHeld = true; touchFlap = true; }, {passive:false});
+flapBtn.addEventListener('touchend', flapBtnUp);
+flapBtn.addEventListener('touchcancel', flapBtnUp);
+
+// ============================================================
+//  物理（浮遊感重視のパラメータ）
+// ============================================================
+const P = {
+  gravity: 5.2,          // 弱い重力
+  fallMax: 4.4,          // ゆっくり落ちる
+  glideFallMax: 1.5,     // Shiftでさらにゆっくり
+  flapUp: 3.9,           // 1回のあおぎ
+  flapUpCap: 6.6,        // 上昇の上限
+  flapCd: 0.30,          // あおぎ間隔
+  airAccel: 7.0,
+  airMax: 5.4,
+  airDrag: 0.86,         // 空中は滑る（慣性強め）
+  groundAccel: 26,
+  groundMax: 4.4,
+  groundDrag: 8.0,
+  turnGround: 2.6,       // 旋回速度 rad/s
+  turnAir: 1.9,
+  eyeH: 1.4
+};
+const vel = new THREE.Vector3();
+player.position.set(0, 0, 8);
+let onGround = true, flapTimer = 0, flapAnim = 1, facing = 0, flapRequest = false;
+let bob = 0, wobbleX = 0, wobbleZ = 0;
+
+let shake = 0;                      // 画面のゆれ
+let hudBal = -1;
+let msgT = 0;
+
+function message(text, sec){
+  msgBox.textContent = text;
+  msgBox.style.opacity = '1';
+  msgT = sec || 1.4;
+}
+
+function gameOver(reason){
+  if(game.over || game.clear) return;
+  game.over = true; game.reason = reason;
+  showResult(false);
+}
+
+// ---- 大きな魚：水面に近づくと現れて飲み込もうとする ----
+function updateFish(dt){
+  if(game.over || game.clear){ return; }
+  const overWater = !onGrass(player.position.x, player.position.z);
+  const heightOverWater = player.position.y - WATER_Y;
+  const danger = overWater && heightOverWater < RULES.fishTriggerH;
+
+  fishState.cd = Math.max(0, fishState.cd - dt);
+
+  if(fishState.mode === 'hidden'){
+    if(danger && fishState.cd <= 0){
+      fishState.mode = 'rise'; fishState.t = 0;
+      fishState.target.set(player.position.x, player.position.y, player.position.z);
+      fish.visible = true;
+      fish.position.set(player.position.x, WATER_Y - 4.5, player.position.z);
+      message('魚だ！ 上へ逃げろ！', 1.2);
+    }
+    return;
+  }
+
+  fishState.t += dt;
+
+  if(fishState.mode === 'rise'){
+    // 水面下から自機の真下へ寄せながら浮上
+    fish.position.x += (player.position.x - fish.position.x) * Math.min(1, dt*2.2);
+    fish.position.z += (player.position.z - fish.position.z) * Math.min(1, dt*2.2);
+    fish.position.y = THREE.MathUtils.lerp(WATER_Y - 4.5, WATER_Y - 0.6, Math.min(1, fishState.t/RULES.fishStrike));
+    fish.lookAt(player.position.x, player.position.y + 1.2, player.position.z);
+    fishJaw.rotation.x = Math.min(0.75, fishState.t*0.6);
+    if(fishState.t >= RULES.fishStrike){
+      if(!danger){ fishState.mode = 'dive'; fishState.t = 0; return; }  // 逃げ切った
+      fishState.mode = 'strike'; fishState.t = 0;
+      fishState.target.set(player.position.x, player.position.y + 1.0, player.position.z);
+    }
+  } else if(fishState.mode === 'strike'){
+    // 飛びかかる
+    const k = Math.min(1, fishState.t/0.55);
+    const from = new THREE.Vector3(fishState.target.x, WATER_Y - 0.6, fishState.target.z);
+    fish.position.lerpVectors(from, fishState.target, k*1.15);
+    fish.lookAt(fishState.target.x, fishState.target.y + 0.5, fishState.target.z);
+    fishJaw.rotation.x = 0.8;
+    const dist = fish.position.distanceTo(new THREE.Vector3(
+      player.position.x, player.position.y + 1.1, player.position.z));
+    if(dist < RULES.fishBite){
+      // 飲み込まれた
+      fishJaw.rotation.x = 0.1;
+      gameOver('大きな魚に飲み込まれた…');
+      return;
+    }
+    if(fishState.t > 0.62){ fishState.mode = 'dive'; fishState.t = 0; }
+  } else if(fishState.mode === 'dive'){
+    fish.position.y -= dt*7;
+    fishJaw.rotation.x = Math.max(0, fishJaw.rotation.x - dt*2);
+    fish.rotation.x += dt*0.8;
+    if(fish.position.y < WATER_Y - 5){
+      fish.visible = false; fish.rotation.set(0,0,0);
+      fishState.mode = 'hidden'; fishState.cd = 1.6;
+    }
+  }
+}
+
+const clock = new THREE.Clock();
+let started = false;
+
+// 立てる高さを返す（地面 or プラットフォーム）
+function onGrass(x, z){
+  return Math.hypot(x - START.x, z - START.z) <= GRASS_R;
+}
+function groundHeightAt(x, z){
+  let h = onGrass(x, z) ? 0 : -999;    // 草地の外は水なので足場が無い
+  for(const p of platforms){
+    const d = Math.hypot(x-p.x, z-p.z);
+    if(d < p.r*0.92 && p.y > h && p.y <= player.position.y + 0.35) h = p.y;
+  }
+  return h;
+}
+
+function update(dt){
+  if(game.over || game.clear){
+    // 演出だけ続ける
+    if(game.over) player.position.y = Math.max(WATER_Y - 1.5, player.position.y - dt*2);
+    camera.lookAt(player.position.x, player.position.y + CAM.lookH, player.position.z);
+    return;
+  }
+  // ---- 入力：上下＝前進／後退、左右＝旋回（自機基準） ----
+  let turn = 0, fwd = 0;
+  if(keys['KeyW']||keys['ArrowUp'])    fwd  += 1;
+  if(keys['KeyS']||keys['ArrowDown'])  fwd  -= 1;
+  if(keys['KeyA']||keys['ArrowLeft'])  turn += 1;
+  if(keys['KeyD']||keys['ArrowRight']) turn -= 1;
+  if(touchMove){
+    const m = Math.hypot(touchMove.dx, touchMove.dy);
+    if(m > 0.18){ turn -= touchMove.dx; fwd -= touchMove.dy; }   // スティック上＝前進
+  }
+  turn = Math.max(-1, Math.min(1, turn));
+  fwd  = Math.max(-1, Math.min(1, fwd));
+
+  // 旋回（空中は少しゆるやか＝浮遊感）
+  facing += turn * (onGround ? P.turnGround : P.turnAir) * dt;
+
+  // 前進方向（モデルは +Z を正面とする）
+  const fx = Math.sin(facing), fz = Math.cos(facing);
+  const back = fwd < 0 ? 0.55 : 1;                 // 後退はゆっくり
+  const wx = fx*fwd*back, wz = fz*fwd*back;
+  const len = Math.abs(fwd);
+
+  const glide = !!(keys['ShiftLeft']||keys['ShiftRight']);
+
+  // ---- あおぐ ----
+  flapTimer -= dt;
+  const wantFlap = keys['Space'] || touchFlap || flapRequest;
+  flapRequest = false;
+  const nBal = aliveBalloons();
+  if(wantFlap && flapTimer <= 0 && nBal > 0){
+    flapTimer = P.flapCd;
+    flapAnim = 0;
+    const power = nBal >= 2 ? 1 : 0.62;          // 風船が1つだと浮力が落ちる
+    vel.y = Math.min(P.flapUpCap*power, Math.max(vel.y + P.flapUp*power, P.flapUp*0.82*power));
+    // 入力方向へひと押し（ふわっと進む）
+    if(len > 0.05){ vel.x += wx*1.5; vel.z += wz*1.5; }
+    onGround = false;
+    gust();
+  } else if(wantFlap && flapTimer <= 0 && nBal === 0){
+    flapTimer = P.flapCd; flapAnim = 0;          // 扇ぐ動作だけはするが浮かない
+  }
+  flapAnim = Math.min(1, flapAnim + dt/P.flapCd);
+
+  // ---- 水平 ----
+  const accel = onGround ? P.groundAccel : P.airAccel;
+  const maxSp = onGround ? P.groundMax  : P.airMax;
+  vel.x += wx*accel*dt;
+  vel.z += wz*accel*dt;
+  if(onGround){
+    const d = Math.exp(-P.groundDrag*dt*(len>0.05?0.25:1));
+    vel.x *= d; vel.z *= d;
+  } else {
+    const d = Math.exp(-P.airDrag*dt*(len>0.05?0.35:1));
+    vel.x *= d; vel.z *= d;
+  }
+  const hs = Math.hypot(vel.x, vel.z);
+  if(hs > maxSp){ vel.x *= maxSp/hs; vel.z *= maxSp/hs; }
+
+  // ---- 垂直 ----
+  if(!onGround){
+    const heavy = nBal === 0 ? 2.1 : (nBal === 1 ? 1.25 : 1);   // 風船が減るほど重い
+    vel.y -= P.gravity*dt*(glide && nBal > 0 ? 0.45 : 1)*heavy;
+    const fm = (glide && nBal > 0 ? P.glideFallMax : P.fallMax) * heavy;
+    if(vel.y < -fm) vel.y = -fm;
+    // 風船のゆらぎ（微小な上下）
+    if(nBal > 0) vel.y += Math.sin(performance.now()*0.0016)*0.25*dt;
+  }
+
+  player.position.addScaledVector(vel, dt);
+
+  // ---- 境界（やわらかく押し戻す） ----
+  const r = Math.hypot(player.position.x, player.position.z);
+  const R = LIMIT.xz;
+  if(r > R){
+    const nx = player.position.x/r, nz = player.position.z/r;
+    const over = r - R;
+    player.position.x = nx*R; player.position.z = nz*R;
+    const inward = vel.x*nx + vel.z*nz;
+    if(inward > 0){ vel.x -= nx*inward*1.25; vel.z -= nz*inward*1.25; }
+    void over;
+  }
+  if(player.position.y > LIMIT.y){
+    player.position.y = LIMIT.y;
+    if(vel.y > 0) vel.y *= -0.25;
+  }
+
+  // ---- 浮遊足場との当たり（貫通不可。上面は着地、下面と側面は岩＝風船が割れる） ----
+  const PR = 0.42;                      // 自機の半径
+  const PH = 2.3;                       // 風船を含めた高さ
+  for(const pf of platforms){
+    pf.hitCd = Math.max(0, pf.hitCd - dt);
+    const dx = player.position.x - pf.x, dz = player.position.z - pf.z;
+    const d = Math.hypot(dx, dz);
+    const headY = player.position.y + PH;
+    if(headY < pf.rockBottom || player.position.y > pf.y) continue;   // 上下に離れている
+    if(player.position.y >= pf.y - 0.3 && vel.y <= 0) continue;       // 上面への着地は接地処理へ
+
+    // 岩は円錐なので、高さに応じて当たり半径が変わる
+    const rockDepth = pf.botY - pf.rockBottom;
+    let hitR = pf.r;
+    if(headY < pf.botY){
+      const k = (pf.botY - headY) / rockDepth;          // 0=付け根 1=先端
+      hitR = pf.r*0.95*(1 - k*0.92);
+    }
+    if(d > hitR + PR) continue;
+
+    const pushSide = (hitR + PR) - d;
+    const onRock = headY < pf.botY;                 // 頭が岩の高さにある＝岩に当たっている
+    const rockSurface = pf.botY - rockDepth*(1 - Math.min(1, d/(pf.r*0.95)));
+
+    if(onRock && (headY - rockSurface) < pushSide){
+      // 岩の底にぶつかった → 風船が割れる
+      player.position.y = rockSurface - PH - 0.01;
+      if(vel.y > 0) vel.y = -1.0;
+    } else {
+      // 側面（緑の縁 or 岩の横）→ 押し戻す
+      const nx = d > 0.001 ? dx/d : 1, nz = d > 0.001 ? dz/d : 0;
+      player.position.x = pf.x + nx*(hitR + PR);
+      player.position.z = pf.z + nz*(hitR + PR);
+      const into = vel.x*nx + vel.z*nz;
+      if(into < 0){
+        // 緑の側面はやわらかく跳ね返る
+        const bounce = onRock ? 1.3 : 1.5;
+        vel.x -= nx*into*bounce; vel.z -= nz*into*bounce;
+      }
+    }
+
+    // 風船が割れるのは岩に当たったときだけ（緑の部分は割れない）
+    if(onRock && pf.hitCd <= 0){
+      pf.hitCd = 1.0;
+      if(popBalloon()){
+        shake = 0.35;
+        message(aliveBalloons() === 0 ? '風船が全部割れた！' : '風船が割れた！', 1.4);
+      }
+    }
+  }
+
+  // ---- フルーツの取得 ----
+  for(const fr of fruits){
+    if(fr.taken) continue;
+    const fp = fr.obj.position;
+    if(Math.hypot(player.position.x-fp.x, player.position.z-fp.z) < 1.0 &&
+       Math.abs(player.position.y + 1.2 - fp.y) < 1.5){
+      fr.taken = true;
+      fr.obj.visible = false;
+      burst(fp, FRUIT_DEFS[fr.kind].color);
+      game.collected.push(fr.kind);
+      updateFruitHud();
+      if(game.collected.length >= RULES.fruitsToClear){
+        game.clear = true;
+        showResult(true);
+      }
+    }
+  }
+
+  // ---- 水面と大きな魚（全ステージ共通） ----
+  updateFish(dt);
+
+  // ---- 接地 ----
+  const gh = groundHeightAt(player.position.x, player.position.z);
+  if(!onGrass(player.position.x, player.position.z) && player.position.y <= WATER_Y + 0.1){
+    // 水面に落ちたら魚に飲み込まれる
+    fish.visible = true;
+    fish.position.set(player.position.x, WATER_Y + 0.2, player.position.z);
+    fish.lookAt(player.position.x, player.position.y + 3, player.position.z);
+    fishJaw.rotation.x = 0.15;
+    fishState.mode = 'done';
+    gameOver('大きな魚に飲み込まれた…');
+  }
+  if(player.position.y <= gh + 0.001){
+    player.position.y = gh;
+    if(!onGround && vel.y < -2.5) bob = Math.min(0.28, -vel.y*0.05);  // 着地でつぶれる
+    vel.y = 0;
+    onGround = true;
+  } else if(player.position.y > gh + 0.06){
+    onGround = false;
+  }
+
+  // ---- 向き（旋回入力で決まる） ----
+  player.rotation.y = facing;
+
+  // ============ アニメーション ============
+  const t = performance.now()*0.001;
+
+  // 腕のあおぎ：0で振り下ろし → 1で持ち上げ
+  const e = flapAnim;
+  const UP = 0.05, DOWN = -0.8;     // 振り上げ／振り下ろしの角度（腕は基本的に下ろす）
+  const swing = e < 0.28
+    ? THREE.MathUtils.lerp(UP, DOWN, Math.pow(e/0.28, 0.55))       // 素早く振り下ろす
+    : THREE.MathUtils.lerp(DOWN, UP, (e-0.28)/0.72);               // ゆっくり戻す
+  const idleArm = onGround ? Math.sin(t*2)*0.06 : Math.sin(t*3)*0.1;
+  arms.forEach(a=>{
+    const base = glide && !onGround ? 1.2 : swing;               // Shiftで真横に広げる
+    a.pivot.rotation.z = (base + idleArm) * a.side;
+    a.pivot.rotation.x = (glide && !onGround) ? -0.15 : Math.sin(t*3)*0.05;
+    // うちわの角度：振り下ろしで面が水平になるように連動させる
+    a.fan.rotation.z = -(glide && !onGround ? 1.5 : 1.1) * a.side;
+    a.fan.rotation.x = 0;
+  });
+
+  // 体のはずみ・傾き
+  bob *= Math.exp(-dt*7);
+  const breathe = onGround ? Math.sin(t*2.1)*0.02 : Math.sin(t*1.5)*0.05;
+  const flapPop = Math.max(0, 1-flapAnim*3) * 0.1;
+  bodyG.position.y = breathe + flapPop - bob;
+  bodyG.scale.set(1 + bob*0.5, 1 - bob*0.7, 1 + bob*0.5);
+
+  // 進行方向へ傾ける（速度から）
+  const localX =  vel.x*Math.cos(-facing) - vel.z*Math.sin(-facing);
+  const localZ =  vel.x*Math.sin(-facing) + vel.z*Math.cos(-facing);
+  wobbleX += (THREE.MathUtils.clamp(localZ*0.045, -0.3, 0.3) - wobbleX) * Math.min(1, dt*5);
+  wobbleZ += (THREE.MathUtils.clamp(-localX*0.05, -0.3, 0.3) - wobbleZ) * Math.min(1, dt*5);
+  tilt.rotation.x = wobbleX + (onGround?0:0.06);
+  tilt.rotation.z = wobbleZ;
+
+  // 脚：歩行 / 空中はぶらぶら
+  if(onGround && hs > 0.4){
+    const w = t*hs*2.4;
+    legL.rotation.x = Math.sin(w)*0.55;
+    legR.rotation.x = -Math.sin(w)*0.55;
+  } else {
+    legL.rotation.x += ((onGround?0:-0.25 + Math.sin(t*1.7)*0.12) - legL.rotation.x)*Math.min(1,dt*4);
+    legR.rotation.x += ((onGround?0:-0.12 + Math.sin(t*1.7+1)*0.12) - legR.rotation.x)*Math.min(1,dt*4);
+  }
+
+  // 風船：加速度に対して遅れて傾く＝浮遊感の主役
+  const lagX = THREE.MathUtils.clamp(-localX*0.055, -0.35, 0.35);
+  const lagZ = THREE.MathUtils.clamp(-localZ*0.05 - vel.y*0.028, -0.4, 0.4);
+  balloons.forEach((b,i)=>{
+    const ph = b.ph + t*1.25;
+    b.swing.rotation.z += (lagX + Math.sin(ph)*0.07 - b.swing.rotation.z)*Math.min(1,dt*3.4);
+    b.swing.rotation.x += (lagZ + Math.cos(ph*0.8)*0.06 - b.swing.rotation.x)*Math.min(1,dt*3.4);
+    b.swing.rotation.y = Math.sin(ph*0.5 + i)*0.12;
+  });
+
+  // 接地影
+  const bh = groundHeightAt(player.position.x, player.position.z);
+  blob.position.set(player.position.x, bh + 0.02, player.position.z);
+  const gap = Math.max(0, player.position.y - bh);
+  blob.material.opacity = Math.max(0, 0.24 - gap*0.012);
+  blob.scale.setScalar(1 + gap*0.045);
+
+  // 雲・装飾
+  clouds.forEach(c=>{
+    c.ang += dt*0.012*c.sp;
+    c.m.position.set(Math.cos(c.ang)*c.rad, c.y + Math.sin(t*0.4+c.ph)*0.5, Math.sin(c.ang)*c.rad);
+  });
+  // フルーツをふわふわ回す
+  fruits.forEach(f=>{
+    if(f.taken) return;
+    f.obj.rotation.y = t*1.1 + f.ph;
+    f.obj.position.y += (Math.sin(t*1.6 + f.ph)*0.0025);
+  });
+  // 波紋
+  ripples.forEach((r,i)=>{
+    const k = (t*0.25 + i*0.33) % 1;
+    r.scale.setScalar(0.9 + k*0.5);
+    r.material.opacity = 0.32*(1-k);
+  });
+
+  // 風パーティクル：プレイヤー周りを漂う
+  const pa = wpGeo.attributes.position;
+  for(let i=0;i<WP;i++){
+    let x = pa.getX(i), y = pa.getY(i), z = pa.getZ(i);
+    y += dt*(0.5 + (i%5)*0.12);
+    x += Math.sin(t*0.6 + i)*dt*0.35;
+    if(y > player.position.y + 16) y = player.position.y - 10;
+    if(Math.abs(x-player.position.x) > 26) x = player.position.x + (Math.random()-0.5)*20;
+    if(Math.abs(z-player.position.z) > 26) z = player.position.z + (Math.random()-0.5)*20;
+    pa.setXYZ(i, x, y, z);
+  }
+  pa.needsUpdate = true;
+
+  // 風船の破裂エフェクト
+  popFx.forEach(f=>{
+    if(!f.m.visible) return;
+    f.t += dt;
+    if(f.t > 0.6){ f.m.visible = false; return; }
+    f.v.y -= 9*dt;
+    f.m.position.addScaledVector(f.v, dt);
+    f.m.material.opacity = 1 - f.t/0.6;
+    f.m.scale.setScalar(1 + f.t*1.5);
+  });
+
+  // メッセージのフェード
+  if(msgT > 0){ msgT -= dt; if(msgT <= 0) msgBox.style.opacity = '0'; }
+
+  // あおぎリング
+  gustPool.forEach(g=>{
+    if(!g.m.visible) return;
+    g.t += dt;
+    const k = g.t/0.5;
+    if(k >= 1){ g.m.visible = false; return; }
+    g.m.scale.setScalar(0.6 + k*3.2);
+    g.m.position.y -= dt*1.4;
+    g.m.material.opacity = 0.5*(1-k);
+  });
+
+  // ---- カメラ（TPS：真後ろ・少し離れて見下ろす／キャラは中央やや下） ----
+  camYawOff -= camYawOff * Math.min(1, dt*1.6);
+  const camYaw = facing + Math.PI + camYawOff;      // 自機の背後の方向
+  const camD = camDist;
+  const desired = new THREE.Vector3(
+    player.position.x + Math.sin(camYaw)*camD*Math.cos(pitch),
+    player.position.y + CAM.height + Math.sin(pitch)*camD,
+    player.position.z + Math.cos(camYaw)*camD*Math.cos(pitch)
+  );
+  const camFloor = groundHeightAt(desired.x, desired.z) + 1.2;
+  if(desired.y < camFloor) desired.y = camFloor;
+  // 初回はスナップ（開始直後からキャラが正しく画面に入る）
+  if(camSnap){ camera.position.copy(desired); camSnap = false; }
+  else camera.position.lerp(desired, Math.min(1, dt*6));
+
+  // 注視点をキャラの頭上に置く → キャラは画面中央やや下に写る
+  camera.lookAt(player.position.x, player.position.y + CAM.lookH, player.position.z);
+  if(shake > 0){
+    shake = Math.max(0, shake - dt*1.2);
+    camera.position.x += (Math.random()-0.5)*shake;
+    camera.position.y += (Math.random()-0.5)*shake;
+  }
+
+  // 日差しをプレイヤーに追従（影の解像度確保）
+  sun.position.set(player.position.x + 16, player.position.y + 26, player.position.z + 12);
+  sun.target.position.copy(player.position);
+  sun.target.updateMatrixWorld();
+
+  // 境界の可視化：近づくと壁がうっすら見える
+  const near = Math.max(0, (r - (R-5))/5);
+  wallMat.opacity = Math.min(0.16, near*0.16);
+  wall.position.x = 0; wall.position.z = 0;
+
+  // ---- HUD ----
+  if(hudBal !== aliveBalloons()){ hudBal = aliveBalloons(); updateBalloonHud(); }
+  const alt = Math.max(0, player.position.y);
+  altFill.style.height = Math.min(100, (alt/LIMIT.y)*100) + '%';
+  altTxt.textContent = alt.toFixed(1);
+  const cd = Math.max(0, flapTimer/P.flapCd);
+  flapRing.style.background = 'conic-gradient(rgba(0,0,0,0) ' + (1-cd) + 'turn, #ff8a6b ' + (1-cd) + 'turn)';
+}
+
+const fruitHud = document.getElementById('fruits');
+const msgBox = document.getElementById('msg');
+const resultBox = document.getElementById('result');
+const resultTitle = document.getElementById('resultTitle');
+const resultText = document.getElementById('resultText');
+const balloonHud = document.getElementById('balloonHud');
+
+const FRUIT_ORDER = ['banana','watermelon','apple','strawberry','orange'];
+function updateFruitHud(){
+  fruitHud.innerHTML = FRUIT_ORDER.map(k=>{
+    const got = game.collected.indexOf(k) >= 0;
+    return '<span class="fr' + (got ? ' got' : '') + '">' + FRUIT_DEFS[k].emoji + '</span>';
+  }).join('') + '<span class="cnt">' + game.collected.length + ' / ' + RULES.fruitsToClear + '</span>';
+}
+function updateBalloonHud(){
+  balloonHud.innerHTML = balloons.map(b=>
+    '<span class="bl' + (b.alive ? '' : ' pop') + '">' + (b.alive ? '●' : '×') + '</span>').join('');
+}
+function showResult(clear){
+  resultBox.style.display = 'grid';
+  resultTitle.textContent = clear ? 'ステージクリア！' : 'ゲームオーバー';
+  resultText.textContent = clear
+    ? 'フルーツを' + RULES.fruitsToClear + 'つ全部あつめた！ 次のステージは準備中 — 今はここでゲームクリアです。'
+    : game.reason;
+  resultBox.className = clear ? 'clear' : 'over';
+}
+updateFruitHud();
+
+const altFill = document.getElementById('altFill');
+const altTxt  = document.getElementById('altTxt');
+const flapRing= document.getElementById('flapRing');
+
+// ============================================================
+//  ループ / リサイズ
+// ============================================================
+function resize(){
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h);   // CSSサイズも更新する（第3引数falseが原因だった）
+  camera.aspect = w/h; camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize); resize();
+
+function loop(){
+  const dt = Math.min(0.033, clock.getDelta());
+  if(started) update(dt);
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+camera.position.set(0, 3, 15);
+camera.lookAt(0,1.3,8);
+loop();
+
+document.getElementById('retry').addEventListener('click', ()=>{ location.reload(); });
+
+document.getElementById('go').addEventListener('click', ()=>{
+  document.getElementById('start').style.display = 'none';
+  started = true;
+  canvas.requestPointerLock && canvas.requestPointerLock();
+});
+})();
+</script>
+</body>
+</html>
