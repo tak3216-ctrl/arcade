@@ -1017,7 +1017,7 @@ function step(dt){
     if(r.life <= 0){ scene.remove(r.m); rings.splice(i,1); }
   }
   dust.rotation.y += dt*.008;
-  if(P.got >= 1) openDoor();   // 動作確認用：1個でドアが開く
+  if(cookies.length === 0) openDoor();   // クッキー10枚すべてでドアが開く
   animDoor(dt);
   drawMap();
 }
