@@ -396,7 +396,8 @@ function buildMonacoGrid(){
       near = Math.sqrt(near);
       h += Math.min(6, near*0.05);          // ground rises gently away from the road
       // water: the harbour basin, and the sea beyond the seaward side
-      const keepDry = smoothstep((near - 42)/38);
+      // the quay runs close to the road at Monaco, so the water is allowed in
+      const keepDry = smoothstep((near - 26)/26);
       let sea = 0;
       if (inPoly(x, z, HARBOUR)) sea = 1;
       sea = Math.max(sea, smoothstep((x - 470)/150));   // east of Portier
@@ -406,8 +407,34 @@ function buildMonacoGrid(){
     }
   }
 }
+// Nearest point on the road, used to pin the ground to it.
+function nearestRoad(x, z){
+  let best = Infinity, y = 0;
+  for (let i=0;i<SAMPLES;i++){
+    const d = trackData[i];
+    const dx = x - d.pos.x, dz = z - d.pos.z;
+    const dd = dx*dx + dz*dz;
+    if (dd < best){ best = dd; y = d.pos.y; }
+  }
+  return { d: Math.sqrt(best), y };
+}
+// The hillside grid alone is an average of the stations around it, so on a 9%
+// slope it can sit a couple of metres above the tarmac - which is how the
+// ground ended up standing in front of the car and the buildings ended up
+// hanging in the air. Within 30 m of the road the ground is now pinned to the
+// road itself, 0.9 m below the surface, and only blends into the wider hillside
+// beyond that.
 function monacoHeight(x, z){
   if (!mGrid) buildMonacoGrid();
+  const near = nearestRoad(x, z);
+  const t = smoothstep((near.d - 45)/110);
+  if (t < 0.999){
+    const far = monacoHillside(x, z);
+    return (near.y - 0.9)*(1-t) + far*t;
+  }
+  return monacoHillside(x, z);
+}
+function monacoHillside(x, z){
   const fx = (x - MG.x0)/MG.step, fz = (z - MG.z0)/MG.step;
   const ix = Math.max(0, Math.min(MG.n-2, Math.floor(fx)));
   const iz = Math.max(0, Math.min(MG.n-2, Math.floor(fz)));
@@ -515,32 +542,34 @@ const gpPoints = () => [
 // (270 m = 255 px). Heights are the real character of the place: the harbour
 // front at ~5 m, climbing Beau Rivage to ~38 m at Casino, then dropping back
 // down through Mirabeau and the hairpin to the waterfront at Portier.
-// Measured on the finished curve: lap 3.1 km (real Monaco is 3.34), tightest
-// radius 9.0 m at the Grand Hotel hairpin, steepest gradient 9.1%.
+// Measured on the finished curve: lap 3.17 km (real Monaco is 3.34), tightest
+// radius 16.2 m, steepest gradient 7.1%. The corners were opened up from the
+// traced originals to carry a 24 m road: at 12 m of half width plus a 1.6 m
+// kerb, anything under about 15 m of radius folds the inner edge of the ribbon
+// back through itself. The hairpin, Mirabeau, Portier and the pool entry were
+// all widened until the kerb line advances everywhere around the lap.
 const monacoPoints = () => {
   const S = 1.06, CX = 500, CY = 380;
   const T = [
-    [152,430,5],[156,380,5],[163,330,5],[178,285,6],[200,255,8],
-    [228,241,9],[258,236,10],                                    // 1 Sainte Devote
-    [320,236,13],[400,241,18],[480,249,23],[560,259,28],         // 2 Beau Rivage
-    [630,271,32],[690,282,35],
-    [725,285,37],[748,268,38],[762,240,39],                      // 3 Massenet
-    [778,208,40],[795,182,40],[820,158,39],[852,138,38],         // 4 Casino
-    [890,116,36],[918,102,34],[940,92,33],[958,86,33],           // 5 Mirabeau Haute
-    [976,96,32],[982,118,31],[972,140,29],[952,154,27],
-    [930,168,25],[925,188,23],[944,199,22],[968,196,21],         // 6 Grand Hotel hairpin
-    [992,200,19],[1018,210,17],[1040,228,14],                    // 7 Mirabeau Bas
-    [1052,250,11],[1038,273,8],[1008,288,7],                     // 8 Portier
-    [960,304,7],[900,324,8],[830,341,8],[760,352,7],             // 9 tunnel
-    [700,358,6],[650,352,6],[618,338,6],[586,338,6],             // 10/11 Nouvelle Chicane
-    [560,352,6],[520,358,6],
-    [455,352,6],[398,345,6],[350,333,6],[315,320,6],             // 12 Tabac
-    [292,308,6],[276,314,6],[270,333,6],[276,358,6],[268,392,6], // 13/14 Louis Chiron
-    [250,426,6],[240,456,6],[232,490,6],[226,530,6],             // 15/16 Piscine
-    [218,561,6],[223,591,6],[233,613,6],
-    [239,651,6],[232,679,6],[212,695,6],[185,701,6],             // 17 La Rascasse
-    [150,701,6],[120,690,6],[100,672,6],[95,650,6],              // 18/19 Anthony Noghes
-    [105,620,5],[120,560,5],[135,500,5],[148,455,5],
+  [152,430,5],[156,380,5],[163,330,5],[178,285,6],[200,255,8],
+  [228,241,9],[258,236,10],                                    // 1 Sainte Devote
+  [320,236,13],[400,241,18],[480,249,23],[560,259,28],[630,271,32],[690,282,35],
+  [725,285,37],[748,268,38],[762,240,39],                      // 3 Massenet
+  [778,208,40],[795,182,40],[820,158,39],[852,138,38],         // 4 Casino
+  [890,116,36],[918,102,34],[940,92,32],[958,86,31],           // 5 Mirabeau Haute
+  [980,100,32],[992,124,31],[984,150,29],[960,166,27],
+  [932,166,26],[896,190,24],[906,234,22],[952,246,21],[996,224,20],  // 6 hairpin
+  [1020,220,18],[1050,240,15],                                 // 7 Mirabeau Bas
+  [1070,266,12],[1064,294,9],[1038,308,8],[1002,306,7],        // 8 Portier
+  [960,304,7],[900,324,8],[830,341,8],[760,352,7],             // 9 tunnel
+  [700,358,6],[650,352,6],[618,338,6],[586,338,6],[560,352,6],[520,358,6], // 10/11 chicane
+  [455,352,6],[398,345,6],[352,334,6],[322,323,6],             // 12 Tabac
+  [296,309,6],[272,318,6],[266,342,6],[276,366,6],[266,396,6], // 13/14 Louis Chiron
+  [250,426,6],[240,456,6],[232,490,6],[226,530,6],             // Piscine
+  [218,561,6],[223,591,6],[233,613,6],
+  [239,651,6],[232,679,6],[212,695,6],[185,701,6],             // 17 La Rascasse
+  [150,701,6],[120,690,6],[100,672,6],[95,650,6],              // 18/19 Anthony Noghes
+  [105,620,5],[120,560,5],[135,500,5],[148,455,5],
   ];
   // Hand-placed heights on irregularly spaced points give gradient spikes, so
   // the profile is relaxed a few times before the curve is built.
@@ -552,7 +581,18 @@ const monacoPoints = () => {
       ys[i] = (a + 2*o[i] + b)/4;
     }
   }
-  return T.map(([px,py],i)=> new THREE.Vector3((px-CX)*S, ys[i], (py-CY)*S));
+  // The plan is relaxed too. Hand-traced points leave small kinks, and at a 24 m
+  // road width a kink is not cosmetic: the inner kerb folds back on itself. Four
+  // light passes clear them without moving the circuit noticeably.
+  const xs = T.map(t=>t[0]), zs = T.map(t=>t[1]);
+  for (let k=0;k<4;k++){
+    const ox=xs.slice(), oz=zs.slice(), n=xs.length, w=0.22;
+    for (let i=0;i<n;i++){
+      xs[i]=ox[i]*(1-w)+((ox[(i-1+n)%n]+ox[(i+1)%n])/2)*w;
+      zs[i]=oz[i]*(1-w)+((oz[(i-1+n)%n]+oz[(i+1)%n])/2)*w;
+    }
+  }
+  return T.map((_,i)=> new THREE.Vector3((xs[i]-CX)*S, ys[i], (zs[i]-CY)*S));
 };
 
 const controlPts = MONACO ? monacoPoints() : ELEVATED ? (function buildJunction(){
@@ -606,7 +646,7 @@ const curve = new THREE.CatmullRomCurve3(controlPts, true, 'catmullrom', ELEVATE
 const SAMPLES = 400;
 // course 2 is a junction ramp, course 1 a wide grand prix circuit, course 3 a
 // genuinely narrow street: 12 m between the barriers.
-const TRACK_HALF_WIDTH = MONACO ? 6 : ELEVATED ? 16 : 37.125;
+const TRACK_HALF_WIDTH = MONACO ? 12 : ELEVATED ? 16 : 37.125;
 const trackPts = curve.getSpacedPoints(SAMPLES);
 const trackData = []; // {pos, right, dist}
 let cumDist = 0;
@@ -696,8 +736,8 @@ const CLEAR_NEED = TRACK_HALF_WIDTH + 6;   // stay this far off the other road's
 // deck and the fencing stands right behind it.
 // Monaco's barriers stand at the edge of the road, with the debris fencing
 // bolted straight to them.
-const WALL_OFF   = TRACK_HALF_WIDTH + (MONACO ? 3 : ELEVATED ? 6 : 20);
-const WALL_MIN   = TRACK_HALF_WIDTH + (MONACO ? 2 : ELEVATED ? 3 : 4.2);
+const WALL_OFF   = TRACK_HALF_WIDTH + (MONACO ? 4 : ELEVATED ? 6 : 20);
+const WALL_MIN   = TRACK_HALF_WIDTH + (MONACO ? 2.5 : ELEVATED ? 3 : 4.2);
 const FENCE_GAP  = MONACO ? 0.4 : ELEVATED ? 1.2 : 16;
 const FENCE_OFF  = WALL_OFF + FENCE_GAP;
 const ARC_GUARD  = 220;                    // closer than this along the lap = same section
@@ -1015,8 +1055,10 @@ const midX = (bounds.minX+bounds.maxX)/2, midZ = (bounds.minZ+bounds.maxZ)/2;
 // Fine patch over the whole circuit. The far terrain is built as four slabs
 // AROUND this patch, never across it — a coarse quad spanning the track used
 // to interpolate above the road surface and poke green through the tarmac.
-const INNER = 4800;
-scene.add(makeGround(INNER, 340, midX, midZ, 0));   // cell size kept near 14 m
+// Monaco's site is only ~1 km across and the ground has to follow a 12 m wide
+// street up a hillside, so it gets a much finer mesh than the open circuits.
+const INNER = MONACO ? 2600 : 4800;
+scene.add(makeGround(INNER, 340, midX, midZ, 0));   // ~7.6 m cells here, 14 m elsewhere
 const FAR = 10400, half = INNER/2;
 scene.add(makeGroundRect(FAR, (FAR-INNER)/2, 60, 20, midX, midZ - half - (FAR-INNER)/4));
 scene.add(makeGroundRect(FAR, (FAR-INNER)/2, 60, 20, midX, midZ + half + (FAR-INNER)/4));
@@ -1792,13 +1834,13 @@ if (!ELEVATED) [1,-1].forEach(s=>{
   const inTunnel = (x, z) => (x > 258 && x < 505 && z > -98 && z < -18);
   function placeBlock(px, pz, yaw, w, d, h, ci){
     const g = new THREE.BoxGeometry(w, h, d);
-    scratch.position.set(px, heightAt(px, pz) - 1 + h/2, pz);
+    scratch.position.set(px, heightAt(px, pz) - 2.5 + h/2, pz);
     scratch.rotation.set(0, yaw, 0);
     scratch.updateMatrix();
     g.applyMatrix4(scratch.matrix);
     buckets[ci].push(g);
     const r = new THREE.BoxGeometry(w*1.04, 0.9, d*1.04);
-    scratch.position.set(px, heightAt(px, pz) - 1 + h + 0.45, pz);
+    scratch.position.set(px, heightAt(px, pz) - 2.5 + h + 0.45, pz);
     scratch.updateMatrix();
     r.applyMatrix4(scratch.matrix);
     roofs.push(r);
@@ -1816,7 +1858,10 @@ if (!ELEVATED) [1,-1].forEach(s=>{
         const off = ring + dp/2;
         ring = off + dp/2 + 8;
         const px = d.pos.x + d.right.x*sg*off, pz = d.pos.z + d.right.z*sg*off;
-        if (heightAt(px, pz) < 3) continue;                 // in the water
+        // both tests: the pinned ground near the road, and the wider hillside,
+        // so nothing gets built out over the harbour
+        if (heightAt(px, pz) < 3) continue;
+        if (monacoHillside(px, pz) < 2) continue;
         if (distToTrackFine(px, pz) < WALL_OFF + 3 + dp/2) continue;
         if (inTunnel(px, pz)) continue;
         if (rnd() > (row === 0 ? 0.9 : 0.6)) continue;
