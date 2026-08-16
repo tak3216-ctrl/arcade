@@ -78,10 +78,11 @@
   #title p { color:#8fd2ff; margin:8px 0 24px; font-size:13px; letter-spacing:3px; font-weight:700; }
 
   #courseSel { display:flex; gap:12px; justify-content:center; margin:0; }
+  #courseSel { flex-wrap:wrap; }
   .courseBtn {
     pointer-events:all; cursor:pointer; font-family:inherit;
     display:flex; flex-direction:column; align-items:center; gap:4px;
-    padding:12px 20px; min-width:190px;
+    padding:12px 18px; min-width:172px;
     background:#12242f; border:3px solid #ffffff; color:#8fd2ff;
   }
   .courseBtn b { font-size:19px; font-style:italic; letter-spacing:3px; color:#ffffff; }
@@ -190,6 +191,9 @@
     <button class="courseBtn" data-course="2">
       <b>COURSE 2</b><small>SPIRAL JUNCTION &mdash; 8.8 km</small>
     </button>
+    <button class="courseBtn" data-course="3">
+      <b>COURSE 3</b><small>MONACO &mdash; 3.1 km</small>
+    </button>
   </div>
 </div>
 
@@ -209,9 +213,11 @@
 // Both circuits live in this one file. The whole world is built once at load
 // from a fixed set of constants, so switching course reloads the page with
 // ?course=N rather than trying to tear the scene down and rebuild it.
-const COURSE_ID = (new URLSearchParams(location.search).get('course') === '2') ? 2 : 1;
+const COURSE_ID = Math.max(1, Math.min(3,
+  Number(new URLSearchParams(location.search).get('course')) || 1));
 const AUTOSTART = new URLSearchParams(location.search).get('start') === '1';
-const COURSE_NAMES = { 1: 'GRAND PRIX', 2: 'SPIRAL JUNCTION' };
+const COURSE_NAMES = { 1: 'GRAND PRIX', 2: 'SPIRAL JUNCTION', 3: 'MONACO' };
+const MONACO = (COURSE_ID === 3);
 
 // ---------- basic setup ----------
 const scene = new THREE.Scene();
@@ -300,7 +306,7 @@ function baseHeight(x, z){
 // Two named features, both driven through by the circuit: a gorge that the
 // north-west leg crosses on a high bridge, and a ridge of high ground that the
 // transfer between the two spirals runs across.
-const SCENERY = (COURSE_ID === 2);
+const SCENERY = (COURSE_ID === 2);   // the gorge and the ridge belong to course 2
 const GORGE = {
   x: -430,          // the gorge runs north-south along this line
   head: 344,        // cliff at its southern head - this is where the falls are
@@ -311,6 +317,7 @@ const GORGE = {
 };
 const RIDGE = { ax:-200, az:-190, bx:280, bz:180, half:170, peak:48 };
 const smoothstep = (t) => { t = Math.max(0, Math.min(1, t)); return t*t*(3-2*t); };
+
 
 function inGorge(x, z, margin){
   const m = margin || 0;
@@ -344,7 +351,74 @@ function ridgeHeight(x, z){
   return Math.max(0, h);
 }
 
+// ---------- Monte Carlo hillside ----------
+// The town is built on a slope that the circuit climbs and descends, so the
+// ground is derived from the road itself: an inverse-distance blend of the
+// track stations gives a hillside that meets the road exactly wherever you are
+// on it. Water is then cut into it - the harbour inside the loop, and the
+// Mediterranean beyond the seaward side of the circuit.
+const SEA_Y = -3.2;
+const HARBOUR = [ [-196,-58], [-104,-40], [-150,240], [-262,238] ];  // x,z metres
+function inPoly(px, pz, poly){
+  let hit = false;
+  for (let i=0, j=poly.length-1; i<poly.length; j=i++){
+    const a = poly[i], b = poly[j];
+    if ((a[1] > pz) !== (b[1] > pz) &&
+        px < (b[0]-a[0])*(pz-a[1])/(b[1]-a[1]) + a[0]) hit = !hit;
+  }
+  return hit;
+}
+let mGrid = null;
+const MG = { n: 112, x0: 0, z0: 0, step: 1 };
+function buildMonacoGrid(){
+  let x0=1e9, x1=-1e9, z0=1e9, z1=-1e9;
+  for (const d of trackData){
+    x0=Math.min(x0,d.pos.x); x1=Math.max(x1,d.pos.x);
+    z0=Math.min(z0,d.pos.z); z1=Math.max(z1,d.pos.z);
+  }
+  const pad = 900;
+  MG.x0 = x0-pad; MG.z0 = z0-pad;
+  MG.step = Math.max((x1-x0+2*pad)/(MG.n-1), (z1-z0+2*pad)/(MG.n-1));
+  mGrid = new Float32Array(MG.n*MG.n);
+  for (let iz=0; iz<MG.n; iz++){
+    for (let ix=0; ix<MG.n; ix++){
+      const x = MG.x0 + ix*MG.step, z = MG.z0 + iz*MG.step;
+      // hillside: inverse distance weighting over the stations
+      let wsum=0, hsum=0, near=1e9;
+      for (const d of trackData){
+        const dx=x-d.pos.x, dz=z-d.pos.z;
+        const d2 = dx*dx+dz*dz;
+        near = Math.min(near, d2);
+        const w = 1/(d2 + 400);
+        wsum += w; hsum += w*d.pos.y;
+      }
+      let h = hsum/wsum;
+      near = Math.sqrt(near);
+      h += Math.min(6, near*0.05);          // ground rises gently away from the road
+      // water: the harbour basin, and the sea beyond the seaward side
+      const keepDry = smoothstep((near - 42)/38);
+      let sea = 0;
+      if (inPoly(x, z, HARBOUR)) sea = 1;
+      sea = Math.max(sea, smoothstep((x - 470)/150));   // east of Portier
+      sea = Math.max(sea, smoothstep((z - 400)/150));   // south of La Rascasse
+      sea *= keepDry;
+      mGrid[iz*MG.n + ix] = h*(1-sea) + SEA_Y*sea;
+    }
+  }
+}
+function monacoHeight(x, z){
+  if (!mGrid) buildMonacoGrid();
+  const fx = (x - MG.x0)/MG.step, fz = (z - MG.z0)/MG.step;
+  const ix = Math.max(0, Math.min(MG.n-2, Math.floor(fx)));
+  const iz = Math.max(0, Math.min(MG.n-2, Math.floor(fz)));
+  const tx = Math.max(0, Math.min(1, fx-ix)), tz = Math.max(0, Math.min(1, fz-iz));
+  const g = (a,b)=> mGrid[b*MG.n + a];
+  return (g(ix,iz)*(1-tx) + g(ix+1,iz)*tx)*(1-tz)
+       + (g(ix,iz+1)*(1-tx) + g(ix+1,iz+1)*tx)*tz;
+}
+
 function heightAt(x, z){
+  if (MONACO) return monacoHeight(x, z);
   let h = baseHeight(x, z) + ridgeHeight(x, z) - gorgeDepth(x, z);
   if (LAKE.active){
     const d = Math.hypot(x - LAKE.x, z - LAKE.z);
@@ -388,8 +462,11 @@ function mergeGeos(geos){
 // radius 70.6 m against a 16 m half width, steepest gradient 2.95%, and where
 // the decks overlap in plan they are never closer than 21.3 m vertically (a deck
 // is 2.4 m thick and carries 9 m of barrier and fencing, so ~12 m is needed).
-const ELEVATED    = (COURSE_ID === 2);
-const TRACK_SCALE = ELEVATED ? 1 : 6.0;   // course 2 points are already in metres
+// Courses 2 and 3 carry their own elevation; only course 2 is built as a viaduct
+// (Monaco is a street circuit laid on the hillside).
+const ELEVATED    = (COURSE_ID !== 1);
+const VIADUCT     = (COURSE_ID === 2);
+const TRACK_SCALE = ELEVATED ? 1 : 6.0;   // courses 2 and 3 are already in metres
 const HELIX_R     = 190;      // radius of each spiral ramp
 const HELIX_CX1   = -340;     // climbing ramp centre
 const HELIX_CX2   =  340;     // descending ramp centre
@@ -433,7 +510,52 @@ const gpPoints = () => [
   // 100 m wide and the roadside furniture of one has room next to the other.
 ].map(p => p.multiplyScalar(TRACK_SCALE));
 
-const controlPts = ELEVATED ? (function buildJunction(){
+// ---------- COURSE 3: Monte Carlo ----------
+// Traced off the circuit map, pixels converted at the map's own scale bar
+// (270 m = 255 px). Heights are the real character of the place: the harbour
+// front at ~5 m, climbing Beau Rivage to ~38 m at Casino, then dropping back
+// down through Mirabeau and the hairpin to the waterfront at Portier.
+// Measured on the finished curve: lap 3.1 km (real Monaco is 3.34), tightest
+// radius 9.0 m at the Grand Hotel hairpin, steepest gradient 9.1%.
+const monacoPoints = () => {
+  const S = 1.06, CX = 500, CY = 380;
+  const T = [
+    [152,430,5],[156,380,5],[163,330,5],[178,285,6],[200,255,8],
+    [228,241,9],[258,236,10],                                    // 1 Sainte Devote
+    [320,236,13],[400,241,18],[480,249,23],[560,259,28],         // 2 Beau Rivage
+    [630,271,32],[690,282,35],
+    [725,285,37],[748,268,38],[762,240,39],                      // 3 Massenet
+    [778,208,40],[795,182,40],[820,158,39],[852,138,38],         // 4 Casino
+    [890,116,36],[918,102,34],[940,92,33],[958,86,33],           // 5 Mirabeau Haute
+    [976,96,32],[982,118,31],[972,140,29],[952,154,27],
+    [930,168,25],[925,188,23],[944,199,22],[968,196,21],         // 6 Grand Hotel hairpin
+    [992,200,19],[1018,210,17],[1040,228,14],                    // 7 Mirabeau Bas
+    [1052,250,11],[1038,273,8],[1008,288,7],                     // 8 Portier
+    [960,304,7],[900,324,8],[830,341,8],[760,352,7],             // 9 tunnel
+    [700,358,6],[650,352,6],[618,338,6],[586,338,6],             // 10/11 Nouvelle Chicane
+    [560,352,6],[520,358,6],
+    [455,352,6],[398,345,6],[350,333,6],[315,320,6],             // 12 Tabac
+    [292,308,6],[276,314,6],[270,333,6],[276,358,6],[268,392,6], // 13/14 Louis Chiron
+    [250,426,6],[240,456,6],[232,490,6],[226,530,6],             // 15/16 Piscine
+    [218,561,6],[223,591,6],[233,613,6],
+    [239,651,6],[232,679,6],[212,695,6],[185,701,6],             // 17 La Rascasse
+    [150,701,6],[120,690,6],[100,672,6],[95,650,6],              // 18/19 Anthony Noghes
+    [105,620,5],[120,560,5],[135,500,5],[148,455,5],
+  ];
+  // Hand-placed heights on irregularly spaced points give gradient spikes, so
+  // the profile is relaxed a few times before the curve is built.
+  const ys = T.map(t=>t[2]);
+  for (let k=0;k<10;k++){
+    const o = ys.slice();
+    for (let i=0;i<ys.length;i++){
+      const a=o[(i-1+ys.length)%ys.length], b=o[(i+1)%ys.length];
+      ys[i] = (a + 2*o[i] + b)/4;
+    }
+  }
+  return T.map(([px,py],i)=> new THREE.Vector3((px-CX)*S, ys[i], (py-CY)*S));
+};
+
+const controlPts = MONACO ? monacoPoints() : ELEVATED ? (function buildJunction(){
   const P = [];
   const push = (x, y, z) => P.push(new THREE.Vector3(x, y + TRACK_Y_BASE, z));
   const arc = (cx, cz, r, a0, a1, n, y0, y1) => {
@@ -482,8 +604,9 @@ const controlPts = ELEVATED ? (function buildJunction(){
 const curve = new THREE.CatmullRomCurve3(controlPts, true, 'catmullrom', ELEVATED ? 0.5 : 0.6);
 
 const SAMPLES = 400;
-// course 2 is a junction ramp, course 1 a wide grand prix circuit
-const TRACK_HALF_WIDTH = ELEVATED ? 16 : 37.125;
+// course 2 is a junction ramp, course 1 a wide grand prix circuit, course 3 a
+// genuinely narrow street: 12 m between the barriers.
+const TRACK_HALF_WIDTH = MONACO ? 6 : ELEVATED ? 16 : 37.125;
 const trackPts = curve.getSpacedPoints(SAMPLES);
 const trackData = []; // {pos, right, dist}
 let cumDist = 0;
@@ -571,9 +694,11 @@ const CLEAR_NEED = TRACK_HALF_WIDTH + 6;   // stay this far off the other road's
 // clearance tests all need to sit outside them.
 // There is no run-off on a viaduct: on course 2 the barrier is the edge of the
 // deck and the fencing stands right behind it.
-const WALL_OFF   = TRACK_HALF_WIDTH + (ELEVATED ? 6 : 20);
-const WALL_MIN   = TRACK_HALF_WIDTH + (ELEVATED ? 3 : 4.2);
-const FENCE_GAP  = ELEVATED ? 1.2 : 16;
+// Monaco's barriers stand at the edge of the road, with the debris fencing
+// bolted straight to them.
+const WALL_OFF   = TRACK_HALF_WIDTH + (MONACO ? 3 : ELEVATED ? 6 : 20);
+const WALL_MIN   = TRACK_HALF_WIDTH + (MONACO ? 2 : ELEVATED ? 3 : 4.2);
+const FENCE_GAP  = MONACO ? 0.4 : ELEVATED ? 1.2 : 16;
 const FENCE_OFF  = WALL_OFF + FENCE_GAP;
 const ARC_GUARD  = 220;                    // closer than this along the lap = same section
 const ROOM_STEP  = 8;                      // stride of the proximity test
@@ -854,7 +979,8 @@ LAKE.depth = 11;
 LAKE.active = true;
 
 // --- ground: a coarse far plane plus a finer patch over the circuit ---
-const groundMat = new THREE.MeshLambertMaterial({ color: 0x46a83c });
+// Monaco is a town on a rock, not a meadow
+const groundMat = new THREE.MeshLambertMaterial({ color: MONACO ? 0xa79a86 : 0x46a83c });
 function makeGround(size, seg, cx, cz, yBias){
   const g = new THREE.PlaneGeometry(size, size, seg, seg);
   const gp = g.attributes.position;
@@ -1138,7 +1264,7 @@ function rnd(){ seed = (seed*1664525 + 1013904223) % 4294967296; return seed/429
 
 const blobCells = new Map();
 
-for (let x=bounds.minX; x<=bounds.maxX; x+=30){
+for (let x=bounds.minX; MONACO ? false : x<=bounds.maxX; x+=30){
   for (let z=bounds.minZ; z<=bounds.maxZ; z+=30){
     const jx = x + (rnd()-0.5)*12, jz = z + (rnd()-0.5)*12;
     if (!insideTrack(jx, jz)) continue;
@@ -1221,6 +1347,9 @@ function lpMat(hex, extra){
       const rad = ring.r0 + rnd()*(ring.r1-ring.r0);
       const h   = ring.h0 + rnd()*(ring.h1-ring.h0);
       const w   = ring.w0 + rnd()*(ring.w1-ring.w0);
+      // Monaco has the Alps behind it and the sea in front: keep the peaks on
+      // the landward side rather than standing them out in the water.
+      if (MONACO && heightAt(midX + Math.cos(ang)*rad, midZ + Math.sin(ang)*rad) < 2) continue;
       const g = new THREE.ConeGeometry(w*0.5, h, 4 + Math.floor(rnd()*3), 1);
       const m = new THREE.Matrix4().compose(
         new THREE.Vector3(midX + Math.cos(ang)*rad, h*0.5 - 70, midZ + Math.sin(ang)*rad),
@@ -1426,7 +1555,7 @@ if (!ELEVATED) [1,-1].forEach(s=>{
 // lower deck: at the two spirals the turns sit directly on top of one another,
 // so those piers step out sideways and reach back in on a cantilevered head.
 (function viaduct(){
-  if (!ELEVATED) return;
+  if (!VIADUCT) return;   // course 3 is laid on the hillside, not carried on piers
   const DECK = 2.4;                       // structural depth below the road
   const deckCol  = new THREE.Color(0x8d949b);
   const skirtCol = new THREE.Color(0x767d84);
@@ -1587,6 +1716,173 @@ if (!ELEVATED) [1,-1].forEach(s=>{
     }
   }
   scene.add(grp);
+})();
+
+// ---------- Monte Carlo: the sea, the harbour and the town ----------
+(function monteCarlo(){
+  if (!MONACO) return;
+  let seed = 90210;
+  const rnd = () => { seed = (seed*1664525 + 1013904223) % 4294967296; return seed/4294967296; };
+
+  // --- the Mediterranean: one plane, showing wherever the ground dips below it
+  const sea = new THREE.Mesh(new THREE.PlaneGeometry(9000, 9000, 1, 1),
+    new THREE.MeshLambertMaterial({ color: 0x1d6ea8 }));
+  sea.rotation.x = -Math.PI/2;
+  sea.position.set(0, 0, 0);
+  sea.receiveShadow = true;
+  scene.add(sea);
+  // a paler shelf just under the surface so the harbour reads as shallow water
+  const shelf = new THREE.Mesh(new THREE.PlaneGeometry(600, 700, 1, 1),
+    new THREE.MeshLambertMaterial({ color: 0x2f8fc4 }));
+  shelf.rotation.x = -Math.PI/2;
+  shelf.position.set(-180, -0.4, 90);
+  scene.add(shelf);
+
+  // --- yachts moored in the harbour ---
+  const hullMat  = new THREE.MeshLambertMaterial({ color: 0xf2f5f7 });
+  const deckMat  = new THREE.MeshLambertMaterial({ color: 0x2b3138 });
+  const trimMat  = new THREE.MeshLambertMaterial({ color: 0x1b4a6b });
+  const boats = new THREE.Group();
+  for (let i=0;i<16;i++){
+    const row = i % 2;
+    const t = Math.floor(i/2)/8;
+    const x = -250 + row*96 + rnd()*10;
+    const z = -30 + t*250 + rnd()*12;
+    if (!inPoly(x, z, HARBOUR)) continue;
+    const len = 18 + rnd()*26, wid = 5 + rnd()*3;
+    const b = new THREE.Group();
+    const hull = new THREE.Mesh(new THREE.BoxGeometry(wid, 2.6, len), hullMat);
+    hull.position.y = 1.0;
+    b.add(hull);
+    const bow = new THREE.Mesh(new THREE.ConeGeometry(wid*0.5, len*0.28, 4), hullMat);
+    bow.rotation.set(Math.PI/2, 0, Math.PI/4);
+    bow.position.set(0, 1.0, -len*0.62);
+    b.add(bow);
+    const cabin = new THREE.Mesh(new THREE.BoxGeometry(wid*0.72, 2.4, len*0.42), hullMat);
+    cabin.position.set(0, 3.4, len*0.04);
+    b.add(cabin);
+    const glass = new THREE.Mesh(new THREE.BoxGeometry(wid*0.74, 0.9, len*0.30), deckMat);
+    glass.position.set(0, 3.8, -len*0.04);
+    b.add(glass);
+    const bridge = new THREE.Mesh(new THREE.BoxGeometry(wid*0.5, 1.8, len*0.18), hullMat);
+    bridge.position.set(0, 5.4, len*0.10);
+    b.add(bridge);
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(wid*1.02, 0.5, len*0.98), trimMat);
+    stripe.position.y = 2.3;
+    b.add(stripe);
+    if (rnd() > 0.5){
+      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, 9, 5), hullMat);
+      mast.position.set(0, 10, len*0.12);
+      b.add(mast);
+    }
+    b.position.set(x, 0.2, z);
+    b.rotation.y = (row ? -1 : 1) * (Math.PI/2) + (rnd()-0.5)*0.12;
+    b.castShadow = true;
+    boats.add(b);
+  }
+  scene.add(boats);
+
+  // --- the town: blocks packed along both sides of the street ---
+  // Monaco is walled in by buildings, so they go as close to the barriers as the
+  // clearance test allows and climb the hillside behind.
+  const PALETTE = [0xe9dcc4, 0xdfc9a8, 0xd8b294, 0xe4d3cd, 0xcfd6d2, 0xf0e3cf];
+  const buckets = PALETTE.map(()=>[]);
+  const roofs = [];
+  const scratch = new THREE.Object3D();
+  const inTunnel = (x, z) => (x > 258 && x < 505 && z > -98 && z < -18);
+  function placeBlock(px, pz, yaw, w, d, h, ci){
+    const g = new THREE.BoxGeometry(w, h, d);
+    scratch.position.set(px, heightAt(px, pz) - 1 + h/2, pz);
+    scratch.rotation.set(0, yaw, 0);
+    scratch.updateMatrix();
+    g.applyMatrix4(scratch.matrix);
+    buckets[ci].push(g);
+    const r = new THREE.BoxGeometry(w*1.04, 0.9, d*1.04);
+    scratch.position.set(px, heightAt(px, pz) - 1 + h + 0.45, pz);
+    scratch.updateMatrix();
+    r.applyMatrix4(scratch.matrix);
+    roofs.push(r);
+  }
+  for (let k=0;k<RIB_COUNT;k+=6){
+    const mi = (k*RIB_STEP) % MESH_SAMPLES;
+    const d  = meshData[mi];
+    const yaw = Math.atan2(d.right.x, d.right.z);
+    for (const sg of [1,-1]){
+      let ring = WALL_OFF + 4;      // running distance out from the centreline
+      for (let row=0; row<3; row++){
+        const w = 16 + rnd()*14, dp = 14 + rnd()*12;
+        // the block is placed by its centre, so half its depth has to clear the
+        // barrier line or the frontage ends up standing in the road
+        const off = ring + dp/2;
+        ring = off + dp/2 + 8;
+        const px = d.pos.x + d.right.x*sg*off, pz = d.pos.z + d.right.z*sg*off;
+        if (heightAt(px, pz) < 3) continue;                 // in the water
+        if (distToTrackFine(px, pz) < WALL_OFF + 3 + dp/2) continue;
+        if (inTunnel(px, pz)) continue;
+        if (rnd() > (row === 0 ? 0.9 : 0.6)) continue;
+        const h = 12 + rnd()*26 + row*6;
+        placeBlock(px, pz, yaw, w, dp, h, Math.floor(rnd()*PALETTE.length));
+      }
+    }
+  }
+  buckets.forEach((geos, i)=>{
+    if (!geos.length) return;
+    const m = new THREE.Mesh(mergeGeos(geos), new THREE.MeshLambertMaterial({ color: PALETTE[i] }));
+    m.castShadow = true; m.receiveShadow = true;
+    scene.add(m);
+    geos.forEach(g=>g.dispose());
+  });
+  if (roofs.length){
+    const m = new THREE.Mesh(mergeGeos(roofs), new THREE.MeshLambertMaterial({ color: 0xb15a44 }));
+    m.castShadow = true;
+    scene.add(m);
+    roofs.forEach(g=>g.dispose());
+  }
+
+  // --- the tunnel between Portier and the chicane ---
+  const pos = [], idx = [];
+  const wallMat = new THREE.MeshLambertMaterial({ color: 0xdad3c6, side: THREE.DoubleSide });
+  const HALF = WALL_OFF + 0.6, TOP = 8.4, WALLTOP = 6.6;
+  let rows = 0, first = null, last = null;
+  for (let i=0;i<=MESH_SAMPLES;i+=2){
+    const dd = meshData[i % MESH_SAMPLES];
+    if (!inTunnel(dd.pos.x, dd.pos.z)) continue;
+    const y = dd.pos.y;
+    const lx = dd.pos.x - dd.right.x*HALF, lz = dd.pos.z - dd.right.z*HALF;
+    const rx = dd.pos.x + dd.right.x*HALF, rz = dd.pos.z + dd.right.z*HALF;
+    // left wall bottom/top, ceiling left/right, right wall top/bottom
+    pos.push(lx, y, lz,  lx, y+WALLTOP, lz,
+             lx, y+TOP, lz,  rx, y+TOP, rz,
+             rx, y+WALLTOP, rz,  rx, y, rz);
+    if (rows > 0){
+      const a = (rows-1)*6, b = rows*6;
+      for (let s=0; s<5; s++){
+        idx.push(a+s, a+s+1, b+s,  a+s+1, b+s+1, b+s);
+      }
+    }
+    if (!first) first = { x:dd.pos.x, z:dd.pos.z, y, right:dd.right.clone() };
+    last = { x:dd.pos.x, z:dd.pos.z, y, right:dd.right.clone() };
+    rows++;
+  }
+  if (rows > 1){
+    const g = new THREE.BufferGeometry();
+    g.setIndex(idx);
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.computeVertexNormals();
+    const tun = new THREE.Mesh(g, wallMat);
+    tun.receiveShadow = true;
+    scene.add(tun);
+    // portal frames so the mouths read as openings rather than cut geometry
+    [first, last].forEach(p=>{
+      if (!p) return;
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(HALF*2 + 7, TOP + 4, 3.5),
+        new THREE.MeshLambertMaterial({ color: 0xcfc6b6 }));
+      frame.position.set(p.x, p.y + (TOP+4)/2 - 1.5, p.z);
+      frame.rotation.y = Math.atan2(p.right.x, p.right.z);
+      frame.castShadow = true;
+      scene.add(frame);
+    });
+  }
 })();
 
 // ---------- start / signal gantries spanning the track ----------
@@ -2079,7 +2375,7 @@ const car = {
 // Course 2 runs to 380 km/h: it is a wide open viaduct with long ramps, where
 // course 1 tops out at 320. The tapering curves below are written against
 // MAX_KMH rather than a hard number so they stretch with it.
-const MAX_KMH   = ELEVATED ? 380 : 320;
+const MAX_KMH   = MONACO ? 310 : COURSE_ID === 2 ? 380 : 320;
 const MAX_SPEED = MAX_KMH/3.6;
 const ACCEL = 30;
 const BRAKE = 39;      // 70% of the old 56 — softer braking
