@@ -137,6 +137,14 @@
   }
   #stickBase.on, #stickKnob.on { opacity:1; }
 
+  /* Landscape on a touch screen the window is short, so the pedals at their
+     default height reach up into the minimap in the top right corner. Drop them
+     to the bottom edge: 34 + 78 px still leaves the map well clear. */
+  @media (pointer: coarse) and (orientation: landscape) {
+    #btnGas   { bottom:34px; }
+    #btnBrake { bottom:34px; }
+  }
+
   /* Landscape on a touch screen: the speed panel is far too big for a short
      window, so it shrinks to 60% and tucks in beside the minimap. The minimap
      is 150 px wide at right:16, so the panel's right edge sits at 182. */
@@ -158,7 +166,7 @@
 
 <div id="hud">
   <div id="topLeft">
-    <div id="lapBox">LAP <span class="big" id="lapNum">1</span>/3</div>
+    <div id="lapBox">LAP <span class="big" id="lapNum">1</span>/2</div>
     <a id="backBtn" href="https://tak3216-ctrl.github.io/arcade/">&#9664; 戻る</a>
   </div>
   <canvas id="minimap" width="150" height="150"></canvas>
@@ -1932,7 +1940,7 @@ function drawDash(kmh, rpm, gear, lapStr, timeStr){
   dctx.textAlign = 'right'; dctx.fillText(timeStr, 248, 146);
   dashTex.needsUpdate = true;
 }
-drawDash(0, 0, 'N', '1/3', '0:00.000');
+drawDash(0, 0, 'N', '1/2', '0:00.000');
 
 // ---- mirrors on stalks, just outside the cockpit ----
 const mirrorMat = new THREE.MeshLambertMaterial({ color: 0x0f0f0f });
@@ -2068,10 +2076,10 @@ const car = {
   steerAngle: 0,      // current visual steer for camera lean
 };
 
-// Course 2 runs to 350 km/h: it is a wide open viaduct with long ramps, where
-// course 1 tops out at 300. The tapering curves below are written against
-// MAX_KMH rather than a hard 300 so they stretch with it.
-const MAX_KMH   = ELEVATED ? 350 : 300;
+// Course 2 runs to 380 km/h: it is a wide open viaduct with long ramps, where
+// course 1 tops out at 320. The tapering curves below are written against
+// MAX_KMH rather than a hard number so they stretch with it.
+const MAX_KMH   = ELEVATED ? 380 : 320;
 const MAX_SPEED = MAX_KMH/3.6;
 const ACCEL = 30;
 const BRAKE = 39;      // 70% of the old 56 — softer braking
@@ -2235,6 +2243,7 @@ function nearestTrackInfo(pos){
 const SEG_LEN = TRACK_TOTAL_LEN/SAMPLES;
 
 // lap tracking
+const TOTAL_LAPS = 2;
 let lap = 1;
 let raceTime = 0;
 let lastProgress = 0;
@@ -2387,7 +2396,7 @@ function animate(){
     const progress = info.dist/TRACK_TOTAL_LEN;
     if (lastProgress > 0.9 && progress < 0.1 && car.speed > 0){
       lap++;
-      document.getElementById('lapNum').textContent = Math.min(lap,3);
+      document.getElementById('lapNum').textContent = Math.min(lap, TOTAL_LAPS);
     }
     lastProgress = progress;
 
@@ -2400,7 +2409,7 @@ function animate(){
     const gearIdx = Math.max(1, Math.min(8, Math.ceil((Math.abs(car.speed)/MAX_SPEED)*8) || 1));
     const rpmVal = 4000 + Math.round((Math.abs(car.speed)/MAX_SPEED)*9000);
     drawDash(kmh, rpmVal, car.speed < -0.5 ? 'R' : (Math.abs(car.speed) < 0.5 ? 'N' : gearIdx),
-             Math.min(lap,3) + '/3', fmtLapTime(raceTime));
+             Math.min(lap, TOTAL_LAPS) + '/' + TOTAL_LAPS, fmtLapTime(raceTime));
     const lit = Math.round(speedRatio * leds.length);
     for (let li=0; li<leds.length; li++){
       leds[li].material.color.setHex(li < lit ? leds[li].userData.col : 0x141414).convertSRGBToLinear();
