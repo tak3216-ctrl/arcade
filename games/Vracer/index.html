@@ -358,7 +358,7 @@ function ridgeHeight(x, z){
 // on it. Water is then cut into it - the harbour inside the loop, and the
 // Mediterranean beyond the seaward side of the circuit.
 const SEA_Y = -3.2;
-const HARBOUR = [ [-196,-58], [-104,-40], [-150,240], [-262,238] ];  // x,z metres
+const HARBOUR = [ [-392,-116], [-208,-80], [-300,480], [-524,476] ];  // x,z metres
 function inPoly(px, pz, poly){
   let hit = false;
   for (let i=0, j=poly.length-1; i<poly.length; j=i++){
@@ -397,11 +397,11 @@ function buildMonacoGrid(){
       h += Math.min(6, near*0.05);          // ground rises gently away from the road
       // water: the harbour basin, and the sea beyond the seaward side
       // the quay runs close to the road at Monaco, so the water is allowed in
-      const keepDry = smoothstep((near - 26)/26);
+      const keepDry = smoothstep((near - 52)/52);
       let sea = 0;
       if (inPoly(x, z, HARBOUR)) sea = 1;
-      sea = Math.max(sea, smoothstep((x - 470)/150));   // east of Portier
-      sea = Math.max(sea, smoothstep((z - 400)/150));   // south of La Rascasse
+      sea = Math.max(sea, smoothstep((x - 940)/300));   // east of Portier
+      sea = Math.max(sea, smoothstep((z - 800)/300));   // south of La Rascasse
       sea *= keepDry;
       mGrid[iz*MG.n + ix] = h*(1-sea) + SEA_Y*sea;
     }
@@ -427,10 +427,10 @@ function nearestRoad(x, z){
 function monacoHeight(x, z){
   if (!mGrid) buildMonacoGrid();
   const near = nearestRoad(x, z);
-  const t = smoothstep((near.d - 45)/110);
+  const t = smoothstep((near.d - 90)/200);
   if (t < 0.999){
     const far = monacoHillside(x, z);
-    return (near.y - 0.9)*(1-t) + far*t;
+    return (near.y - 1.6)*(1-t) + far*t;   // sits the ground clear below the tarmac
   }
   return monacoHillside(x, z);
 }
@@ -542,14 +542,18 @@ const gpPoints = () => [
 // (270 m = 255 px). Heights are the real character of the place: the harbour
 // front at ~5 m, climbing Beau Rivage to ~38 m at Casino, then dropping back
 // down through Mirabeau and the hairpin to the waterfront at Portier.
-// Measured on the finished curve: lap 3.17 km (real Monaco is 3.34), tightest
-// radius 16.2 m, steepest gradient 7.1%. The corners were opened up from the
-// traced originals to carry a 24 m road: at 12 m of half width plus a 1.6 m
-// kerb, anything under about 15 m of radius folds the inner edge of the ribbon
-// back through itself. The hairpin, Mirabeau, Portier and the pool entry were
-// all widened until the kerb line advances everywhere around the lap.
+// Measured on the finished curve: lap 6.34 km, tightest radius 32.5 m, steepest
+// gradient 7.1%, and the kerb line advances everywhere around the lap at both
+// 27.2 m (the kerb edge) and 30 m of offset. That advance test is the one that
+// matters: at this width a kink that would be invisible on a narrow road folds
+// the inner edge of the ribbon back through itself.
 const monacoPoints = () => {
-  const S = 1.06, CX = 500, CY = 380;
+  // The map scale bar gives 1.06 m per pixel. The circuit is laid out at twice
+  // that, because the road is now 48 m wide and a road cannot be wider than the
+  // radius of the corner it sits in - scaling the plan with the width keeps
+  // every corner the same shape and the same margin it had before. Heights
+  // double with it so the climb to Casino keeps its 7% gradient.
+  const S = 2.12, CX = 500, CY = 380, HSCALE = 2;
   const T = [
   [152,430,5],[156,380,5],[163,330,5],[178,285,6],[200,255,8],
   [228,241,9],[258,236,10],                                    // 1 Sainte Devote
@@ -562,7 +566,8 @@ const monacoPoints = () => {
   [1020,220,18],[1050,240,15],                                 // 7 Mirabeau Bas
   [1070,266,12],[1064,294,9],[1038,308,8],[1002,306,7],        // 8 Portier
   [960,304,7],[900,324,8],[830,341,8],[760,352,7],             // 9 tunnel
-  [700,358,6],[650,352,6],[618,338,6],[586,338,6],[560,352,6],[520,358,6], // 10/11 chicane
+  [700,360,6],[656,356,6],[628,330,6],[586,326,6],[556,354,6],[516,360,6], // 10/11 chicane
+                                                     // deepened: a sharper flick
   [455,352,6],[398,345,6],[352,334,6],[322,323,6],             // 12 Tabac
   [296,309,6],[272,318,6],[266,342,6],[276,366,6],[266,396,6], // 13/14 Louis Chiron
   [250,426,6],[240,456,6],[232,490,6],[226,530,6],             // Piscine
@@ -592,7 +597,7 @@ const monacoPoints = () => {
       zs[i]=oz[i]*(1-w)+((oz[(i-1+n)%n]+oz[(i+1)%n])/2)*w;
     }
   }
-  return T.map((_,i)=> new THREE.Vector3((xs[i]-CX)*S, ys[i], (zs[i]-CY)*S));
+  return T.map((_,i)=> new THREE.Vector3((xs[i]-CX)*S, ys[i]*HSCALE, (zs[i]-CY)*S));
 };
 
 const controlPts = MONACO ? monacoPoints() : ELEVATED ? (function buildJunction(){
@@ -646,7 +651,7 @@ const curve = new THREE.CatmullRomCurve3(controlPts, true, 'catmullrom', ELEVATE
 const SAMPLES = 400;
 // course 2 is a junction ramp, course 1 a wide grand prix circuit, course 3 a
 // genuinely narrow street: 12 m between the barriers.
-const TRACK_HALF_WIDTH = MONACO ? 12 : ELEVATED ? 16 : 37.125;
+const TRACK_HALF_WIDTH = MONACO ? 24 : ELEVATED ? 16 : 37.125;
 const trackPts = curve.getSpacedPoints(SAMPLES);
 const trackData = []; // {pos, right, dist}
 let cumDist = 0;
@@ -736,8 +741,8 @@ const CLEAR_NEED = TRACK_HALF_WIDTH + 6;   // stay this far off the other road's
 // deck and the fencing stands right behind it.
 // Monaco's barriers stand at the edge of the road, with the debris fencing
 // bolted straight to them.
-const WALL_OFF   = TRACK_HALF_WIDTH + (MONACO ? 4 : ELEVATED ? 6 : 20);
-const WALL_MIN   = TRACK_HALF_WIDTH + (MONACO ? 2.5 : ELEVATED ? 3 : 4.2);
+const WALL_OFF   = TRACK_HALF_WIDTH + (MONACO ? 8 : ELEVATED ? 6 : 20);
+const WALL_MIN   = TRACK_HALF_WIDTH + (MONACO ? 5 : ELEVATED ? 3 : 4.2);
 const FENCE_GAP  = MONACO ? 0.4 : ELEVATED ? 1.2 : 16;
 const FENCE_OFF  = WALL_OFF + FENCE_GAP;
 const ARC_GUARD  = 220;                    // closer than this along the lap = same section
@@ -1057,7 +1062,7 @@ const midX = (bounds.minX+bounds.maxX)/2, midZ = (bounds.minZ+bounds.maxZ)/2;
 // to interpolate above the road surface and poke green through the tarmac.
 // Monaco's site is only ~1 km across and the ground has to follow a 12 m wide
 // street up a hillside, so it gets a much finer mesh than the open circuits.
-const INNER = MONACO ? 2600 : 4800;
+const INNER = MONACO ? 5200 : 4800;
 scene.add(makeGround(INNER, 340, midX, midZ, 0));   // ~7.6 m cells here, 14 m elsewhere
 const FAR = 10400, half = INNER/2;
 scene.add(makeGroundRect(FAR, (FAR-INNER)/2, 60, 20, midX, midZ - half - (FAR-INNER)/4));
@@ -1774,10 +1779,10 @@ if (!ELEVATED) [1,-1].forEach(s=>{
   sea.receiveShadow = true;
   scene.add(sea);
   // a paler shelf just under the surface so the harbour reads as shallow water
-  const shelf = new THREE.Mesh(new THREE.PlaneGeometry(600, 700, 1, 1),
+  const shelf = new THREE.Mesh(new THREE.PlaneGeometry(1200, 1400, 1, 1),
     new THREE.MeshLambertMaterial({ color: 0x2f8fc4 }));
   shelf.rotation.x = -Math.PI/2;
-  shelf.position.set(-180, -0.4, 90);
+  shelf.position.set(-360, -0.4, 180);
   scene.add(shelf);
 
   // --- yachts moored in the harbour ---
@@ -1788,10 +1793,10 @@ if (!ELEVATED) [1,-1].forEach(s=>{
   for (let i=0;i<16;i++){
     const row = i % 2;
     const t = Math.floor(i/2)/8;
-    const x = -250 + row*96 + rnd()*10;
-    const z = -30 + t*250 + rnd()*12;
+    const x = -500 + row*192 + rnd()*20;
+    const z = -60 + t*500 + rnd()*24;
     if (!inPoly(x, z, HARBOUR)) continue;
-    const len = 18 + rnd()*26, wid = 5 + rnd()*3;
+    const len = 26 + rnd()*38, wid = 7 + rnd()*4;
     const b = new THREE.Group();
     const hull = new THREE.Mesh(new THREE.BoxGeometry(wid, 2.6, len), hullMat);
     hull.position.y = 1.0;
@@ -1831,7 +1836,7 @@ if (!ELEVATED) [1,-1].forEach(s=>{
   const buckets = PALETTE.map(()=>[]);
   const roofs = [];
   const scratch = new THREE.Object3D();
-  const inTunnel = (x, z) => (x > 258 && x < 505 && z > -98 && z < -18);
+  const inTunnel = (x, z) => (x > 516 && x < 1010 && z > -196 && z < -36);
   function placeBlock(px, pz, yaw, w, d, h, ci){
     const g = new THREE.BoxGeometry(w, h, d);
     scratch.position.set(px, heightAt(px, pz) - 2.5 + h/2, pz);
@@ -1917,16 +1922,10 @@ if (!ELEVATED) [1,-1].forEach(s=>{
     const tun = new THREE.Mesh(g, wallMat);
     tun.receiveShadow = true;
     scene.add(tun);
-    // portal frames so the mouths read as openings rather than cut geometry
-    [first, last].forEach(p=>{
-      if (!p) return;
-      const frame = new THREE.Mesh(new THREE.BoxGeometry(HALF*2 + 7, TOP + 4, 3.5),
-        new THREE.MeshLambertMaterial({ color: 0xcfc6b6 }));
-      frame.position.set(p.x, p.y + (TOP+4)/2 - 1.5, p.z);
-      frame.rotation.y = Math.atan2(p.right.x, p.right.z);
-      frame.castShadow = true;
-      scene.add(frame);
-    });
+    // The mouths used to carry a solid slab as a "portal frame". It spanned the
+    // full width and height of the opening, so it stood square across the road
+    // at both ends - what looked like a pillar in the middle of the lane. The
+    // tunnel shell reads perfectly well as an opening on its own, so it is gone.
   }
 })();
 
@@ -2420,7 +2419,7 @@ const car = {
 // Course 2 runs to 380 km/h: it is a wide open viaduct with long ramps, where
 // course 1 tops out at 320. The tapering curves below are written against
 // MAX_KMH rather than a hard number so they stretch with it.
-const MAX_KMH   = MONACO ? 310 : COURSE_ID === 2 ? 380 : 320;
+const MAX_KMH   = MONACO ? 300 : COURSE_ID === 2 ? 380 : 320;
 const MAX_SPEED = MAX_KMH/3.6;
 const ACCEL = 30;
 const BRAKE = 39;      // 70% of the old 56 — softer braking
@@ -2862,6 +2861,32 @@ function beginRace(){
   document.getElementById('stickZone').style.pointerEvents = 'all';
   started = true;
 }
+
+// The back button does two different jobs depending on where you are. On the
+// title screen it leaves for the arcade, which is what its href does on its own.
+// Mid-race it comes back to the title instead, so getting out of a course no
+// longer means leaving the game. The car is put back on the grid rather than
+// left parked wherever it stopped, so the next start is a clean one.
+function returnToTitle(){
+  started = false;
+  const d0 = trackData[0];
+  car.pos.copy(d0.pos);
+  car.heading = Math.atan2(d0.tangent.x, d0.tangent.z);
+  car.speed = 0;
+  car.steerAngle = 0;
+  carStation = 0;
+  lap = 1; raceTime = 0; lastProgress = 0;
+  input.up = input.down = input.left = input.right = input.stick = false;
+  input.axis = 0;
+  document.getElementById('lapNum').textContent = 1;
+  document.getElementById('stickZone').style.pointerEvents = 'none';
+  document.getElementById('title').style.display = '';
+}
+document.getElementById('backBtn').addEventListener('click', (e)=>{
+  if (!started) return;          // on the title screen: let the link do its job
+  e.preventDefault();
+  returnToTitle();
+});
 
 // Course buttons: the one already loaded just starts, the other reloads with
 // ?course=N&start=1 so the new circuit builds and drops straight into the race.
