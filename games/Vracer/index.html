@@ -84,6 +84,18 @@
   }
   #startBtn:active { background:#a5161f; }
 
+  #courseSel { display:flex; gap:12px; justify-content:center; margin:0 0 22px; }
+  .courseBtn {
+    pointer-events:all; cursor:pointer; font-family:inherit;
+    display:flex; flex-direction:column; align-items:center; gap:4px;
+    padding:12px 20px; min-width:190px;
+    background:#12242f; border:3px solid #ffffff; color:#8fd2ff;
+  }
+  .courseBtn b { font-size:19px; font-style:italic; letter-spacing:3px; color:#ffffff; }
+  .courseBtn small { font-size:11px; letter-spacing:2px; }
+  .courseBtn.on { background:#e0201c; }
+  .courseBtn.on small { color:#ffe2e0; }
+
   #controls {
     position:absolute; top:68px; left:20px;
     font-size:11px; letter-spacing:1px; white-space:nowrap;
@@ -159,7 +171,15 @@
 
 <div id="title">
   <h1>VIRTUA <span>RACER</span></h1>
-  <p>LOW-POLY GRAND PRIX &mdash; DRIVER'S EYE VIEW</p>
+  <p id="courseTag">DRIVER'S EYE VIEW</p>
+  <div id="courseSel">
+    <button class="courseBtn" data-course="1">
+      <b>COURSE 1</b><small>GRAND PRIX &mdash; 9.9 km</small>
+    </button>
+    <button class="courseBtn" data-course="2">
+      <b>COURSE 2</b><small>SPIRAL JUNCTION &mdash; 8.8 km</small>
+    </button>
+  </div>
   <button id="startBtn">START ENGINE</button>
 </div>
 
@@ -174,6 +194,14 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 (function(){
+
+// ---------- course selection ----------
+// Both circuits live in this one file. The whole world is built once at load
+// from a fixed set of constants, so switching course reloads the page with
+// ?course=N rather than trying to tear the scene down and rebuild it.
+const COURSE_ID = (new URLSearchParams(location.search).get('course') === '2') ? 2 : 1;
+const AUTOSTART = new URLSearchParams(location.search).get('start') === '1';
+const COURSE_NAMES = { 1: 'GRAND PRIX', 2: 'SPIRAL JUNCTION' };
 
 // ---------- basic setup ----------
 const scene = new THREE.Scene();
@@ -250,13 +278,64 @@ scene.add(sun.target);
 // it later, once a suitable spot inside the circuit has been found.
 const LAKE = { x:0, z:0, r:0, depth:0, active:false };
 
+// Course 2 is a viaduct, so its ground only has to read as a plausible site
+// underneath the structure; course 1 is driven on the terrain itself.
+const TERRAIN_AMP = (COURSE_ID === 2) ? 0.45 : 1.0;
 function baseHeight(x, z){
-  return 3.6*Math.sin(x/210) * Math.cos(z/175)
+  return TERRAIN_AMP * (3.6*Math.sin(x/210) * Math.cos(z/175)
        + 1.7*Math.sin((x + z)/130)
-       + 0.8*Math.sin((x - z*0.6)/72);
+       + 0.8*Math.sin((x - z*0.6)/72));
 }
+// ---------- course 2 landscape ----------
+// Two named features, both driven through by the circuit: a gorge that the
+// north-west leg crosses on a high bridge, and a ridge of high ground that the
+// transfer between the two spirals runs across.
+const SCENERY = (COURSE_ID === 2);
+const GORGE = {
+  x: -430,          // the gorge runs north-south along this line
+  head: 344,        // cliff at its southern head - this is where the falls are
+  tail: 1150,
+  floorHalf: 50,    // flat river bed
+  rimHalf: 100,     // wall crest: 62 m of drop in 50 m, steep enough to read as cliff
+  depth: 62
+};
+const RIDGE = { ax:-200, az:-190, bx:280, bz:180, half:170, peak:48 };
+const smoothstep = (t) => { t = Math.max(0, Math.min(1, t)); return t*t*(3-2*t); };
+
+function inGorge(x, z, margin){
+  const m = margin || 0;
+  return Math.abs(x - GORGE.x) < GORGE.rimHalf + m && z > GORGE.head - m && z < GORGE.tail + m;
+}
+function gorgeDepth(x, z){
+  if (!SCENERY) return 0;
+  const u = Math.abs(x - GORGE.x);
+  if (u > GORGE.rimHalf) return 0;
+  const across = 1 - smoothstep((u - GORGE.floorHalf)/(GORGE.rimHalf - GORGE.floorHalf));
+  // abrupt at the head so there is a cliff for the water to fall over, and a
+  // gentle run-out at the far end
+  const along = smoothstep((z - GORGE.head)/22) * (1 - smoothstep((z - GORGE.tail)/260));
+  return GORGE.depth * across * along;
+}
+function ridgeHeight(x, z){
+  if (!SCENERY) return 0;
+  // distance to the segment the ridge follows
+  const vx = RIDGE.bx-RIDGE.ax, vz = RIDGE.bz-RIDGE.az;
+  const t = Math.max(0, Math.min(1, ((x-RIDGE.ax)*vx + (z-RIDGE.az)*vz)/(vx*vx+vz*vz)));
+  const px = RIDGE.ax + vx*t, pz = RIDGE.az + vz*t;
+  const d = Math.hypot(x-px, z-pz);
+  if (d > RIDGE.half) return 0;
+  let h = RIDGE.peak * (1 - smoothstep(d/RIDGE.half));
+  h *= 0.75 + 0.25*Math.sin(t*9.1) + 0.12*Math.sin(t*23.0);   // an uneven crest
+  // the spiral ramps stand on flat ground: hold the ridge well clear of them
+  for (const cx of [-340, 340]){
+    const dc = Math.hypot(x-cx, z);
+    h *= smoothstep((dc - 260)/140);
+  }
+  return Math.max(0, h);
+}
+
 function heightAt(x, z){
-  let h = baseHeight(x, z);
+  let h = baseHeight(x, z) + ridgeHeight(x, z) - gorgeDepth(x, z);
   if (LAKE.active){
     const d = Math.hypot(x - LAKE.x, z - LAKE.z);
     if (d < LAKE.r){
@@ -289,24 +368,25 @@ function mergeGeos(geos){
 }
 
 // ---------- track path ----------
-// A closed loop with a couple of sweeping corners + one chicane-ish esse
-// Suzuka-circuit-inspired layout: start/finish straight -> Turn 1/2 ->
-// esses-style S-curve chain -> Dunlop-style sweep -> Degner-style double
-// apex -> back straight -> hairpin -> spoon-curve sweep -> fast sweeper
-// (130R-style) -> chicane -> back to the line.
-// Note: real Suzuka has a figure-8 overpass; this system is flat, so the
-// loop is drawn as a single non-crossing circuit that keeps the same
-// section flow instead of a literal bridge crossing.
-// Widening the road on its own is not possible past a certain point: the road
-// cannot be wider than the radius of its tightest corner, or the inside kerb
-// passes through the centre of the corner and the ribbon turns inside out. The
-// circuit is scaled up alongside the width to keep the corners drivable:
-//   width x2.0  -> scale 3.0 -> 4.5 (lap 5.0 -> 7.5 km)
-//   width x1.5  -> scale 4.5 -> 6.0 (lap 7.5 -> 9.9 km)
-// At scale 6 the tightest corner is 46.6 m radius against a 37.1 m half width,
-// so the inside kerb still has ~8 m of radius left - the same margin as before.
-const TRACK_SCALE = 6.0;
-const controlPts = [
+// COURSE 1 - grand prix: a flat circuit that takes its height from the terrain.
+// COURSE 2 - spiral junction: two helical ramps, each wound twice, joined by a
+// high transfer and a ground level return loop. That circuit passes over itself,
+// so it cannot take its height from the terrain the way course 1 does: every
+// station carries its own elevation and the road is built as a viaduct on piers.
+//
+// Course 2 was verified before it was written in: lap 8.77 km, tightest plan
+// radius 70.6 m against a 16 m half width, steepest gradient 2.95%, and where
+// the decks overlap in plan they are never closer than 21.3 m vertically (a deck
+// is 2.4 m thick and carries 9 m of barrier and fencing, so ~12 m is needed).
+const ELEVATED    = (COURSE_ID === 2);
+const TRACK_SCALE = ELEVATED ? 1 : 6.0;   // course 2 points are already in metres
+const HELIX_R     = 190;      // radius of each spiral ramp
+const HELIX_CX1   = -340;     // climbing ramp centre
+const HELIX_CX2   =  340;     // descending ramp centre
+const SUMMIT      = 56;       // height gained over the climb
+const TRACK_Y_BASE = 6;       // the ground level lap still runs on a low deck
+
+const gpPoints = () => [
   new THREE.Vector3(0, 0, 0),        // start/finish
   new THREE.Vector3(0, 0, 90),       // straight
   new THREE.Vector3(25, 0, 150),     // Turn 1 entry (right)
@@ -342,14 +422,58 @@ const controlPts = [
   // line now sits further out, so the neck between the two sections is over
   // 100 m wide and the roadside furniture of one has room next to the other.
 ].map(p => p.multiplyScalar(TRACK_SCALE));
-const curve = new THREE.CatmullRomCurve3(controlPts, true, 'catmullrom', 0.6);
+
+const controlPts = ELEVATED ? (function buildJunction(){
+  const P = [];
+  const push = (x, y, z) => P.push(new THREE.Vector3(x, y + TRACK_Y_BASE, z));
+  const arc = (cx, cz, r, a0, a1, n, y0, y1) => {
+    for (let i=1;i<=n;i++){
+      const t = i/n, a = (a0 + (a1-a0)*t) * Math.PI/180;
+      push(cx + r*Math.cos(a), y0 + (y1-y0)*t, cz + r*Math.sin(a));
+    }
+  };
+  const STEP = 30;   // degrees between control points on the helices
+
+  // climbing helix, anticlockwise, entered at its south point heading +x
+  for (let d=-90; d<630; d+=STEP){
+    const a = d*Math.PI/180;
+    push(HELIX_CX1 + HELIX_R*Math.cos(a), SUMMIT*(d+90)/720, HELIX_R*Math.sin(a));
+  }
+  // high transfer: an S from the top of one ramp to the top of the other
+  push(-200, SUMMIT,     -190);
+  push( -90, SUMMIT-1,   -172);
+  push(   0, SUMMIT-2,   -110);
+  push(  70, SUMMIT-2.5,  -20);
+  push( 140, SUMMIT-3,     80);
+  push( 210, SUMMIT-3.5,  150);
+  push( 280, SUMMIT-4,    180);
+  // descending helix, clockwise, entered at its north point heading +x
+  for (let d=90; d>-630; d-=STEP){
+    const a = d*Math.PI/180;
+    push(HELIX_CX2 + HELIX_R*Math.cos(a), (SUMMIT-4)*(1 - (90-d)/720), HELIX_R*Math.sin(a));
+  }
+  // ground level return: left loop, back along the north side, left loop again
+  arc(HELIX_CX2, 375, 185, -90, 90, 7, 0, 0);
+  // The run along the north side weaves instead of running straight, and rides
+  // over a crest before dropping into the gorge: the bridge sits at the bottom
+  // of the dip and the road climbs away again on the far side. Amplitude and
+  // spacing were chosen against the curvature: +-30 m of weave every 170 m of
+  // road holds the tightest plan radius at about 100 m, and the steepest part
+  // of the dip works out at 3.75%.
+  push( 255,  2, 558); push( 150,  5, 528); push( -20,  8, 586);
+  push(-190,  6, 524); push(-320,  3, 556);
+  push(-430,  0, 560);                      // mid span, the low point of the lap
+  push(-520,  2, 558);
+  arc(-700, 185, 375,  90, 180, 5,  4, 16); // climbing away from the bridge
+  arc(-700, 185, 375, 180, 270, 5, 16,  2);
+  push(-620, 1, -190); push(-480, 0, -190);
+  return P;
+})() : gpPoints();
+const curve = new THREE.CatmullRomCurve3(controlPts, true, 'catmullrom', ELEVATED ? 0.5 : 0.6);
 
 const SAMPLES = 400;
-const TRACK_HALF_WIDTH = 37.125; // full width 74.25 m (1.5x again)
-// Everything roadside is expressed relative to this, so the barriers, kerbs,
-// grandstands, pit lane and clearance tests all follow the wider road. Note the
-// chicane kinks and the last corner are 23-26 m radius on the centreline, so
-// at this width their inner kerb wraps very tightly.
+// course 2 is a junction ramp, course 1 a wide grand prix circuit
+const TRACK_HALF_WIDTH = ELEVATED ? 16 : 37.125;
 const trackPts = curve.getSpacedPoints(SAMPLES);
 const trackData = []; // {pos, right, dist}
 let cumDist = 0;
@@ -357,7 +481,7 @@ for (let i=0;i<trackPts.length;i++){
   const p = trackPts[i];
   const pNext = trackPts[(i+1)%trackPts.length];
   const tangent = pNext.clone().sub(p).normalize();
-  const right = new THREE.Vector3(tangent.z, 0, -tangent.x); // perpendicular on flat plane
+  const right = new THREE.Vector3(tangent.z, 0, -tangent.x).normalize(); // level, across the road
   if (i>0) cumDist += p.distanceTo(trackPts[i-1]);
   trackData.push({ pos:p, tangent, right, dist:cumDist });
 }
@@ -417,7 +541,7 @@ for (let i=0;i<meshPts.length;i++){
   const p = meshPts[i];
   const pNext = meshPts[(i+1)%meshPts.length];
   const tangent = pNext.clone().sub(p).normalize();
-  meshData.push({ pos:p, right:new THREE.Vector3(tangent.z, 0, -tangent.x) });
+  meshData.push({ pos:p, right:new THREE.Vector3(tangent.z, 0, -tangent.x).normalize() });
 }
 
 // ---------- how much room each side of the road actually has ----------
@@ -435,10 +559,12 @@ const MESH_LEN   = meshDist[MESH_SAMPLES];
 const CLEAR_NEED = TRACK_HALF_WIDTH + 6;   // stay this far off the other road's edge
 // Barrier and fence lines, declared here because the grandstands, tree line and
 // clearance tests all need to sit outside them.
-const WALL_OFF   = TRACK_HALF_WIDTH + 20;    // concrete barrier, ~45 m out
-const WALL_MIN   = TRACK_HALF_WIDTH + 4.2;   // preferred minimum where space is short
-const FENCE_GAP  = 16;                       // catch fencing stands this far behind it
-const FENCE_OFF  = WALL_OFF + FENCE_GAP;     // ~61 m out
+// There is no run-off on a viaduct: on course 2 the barrier is the edge of the
+// deck and the fencing stands right behind it.
+const WALL_OFF   = TRACK_HALF_WIDTH + (ELEVATED ? 6 : 20);
+const WALL_MIN   = TRACK_HALF_WIDTH + (ELEVATED ? 3 : 4.2);
+const FENCE_GAP  = ELEVATED ? 1.2 : 16;
+const FENCE_OFF  = WALL_OFF + FENCE_GAP;
 const ARC_GUARD  = 220;                    // closer than this along the lap = same section
 const ROOM_STEP  = 8;                      // stride of the proximity test
 const ROOM_CAP   = 400;                    // "plenty of space" ceiling
@@ -470,6 +596,9 @@ function computeRoom(sideSign){
       let arc = Math.abs(meshDist[i] - meshDist[j]);
       if (MESH_LEN - arc < arc) arc = MESH_LEN - arc;
       if (arc < ARC_GUARD) continue;                 // same stretch of road
+      // Vertically separated decks pass over one another by design, so they do
+      // not constrain each other's barriers at all.
+      if (Math.abs(meshData[j].pos.y - d.pos.y) > 12) continue;
       const vx = meshData[j].pos.x - d.pos.x, vz = meshData[j].pos.z - d.pos.z;
       const along = vx*dx + vz*dz;
       if (along <= 0) continue;                      // that section is behind this side
@@ -513,6 +642,28 @@ function clampOff(i, sideSign, want, minOff){
   const floor = Math.min(minOff, Math.max(TRACK_HALF_WIDTH + 2.0, room));
   return Math.max(floor, Math.min(want, room));
 }
+// Height of the road surface at mesh station mi. On a terrain-following circuit
+// this is just the ground under that point; on this one every station carries
+// its own elevation, so the whole deck - road, kerbs, lines, barriers, fencing,
+// posts, gantries - is hung off the curve instead.
+function surfY(mi, x, z){
+  return ELEVATED ? meshData[((mi % MESH_SAMPLES) + MESH_SAMPLES) % MESH_SAMPLES].pos.y
+                  : heightAt(x, z);
+}
+// Surface the car is actually driving on: the deck on course 2, the terrain on
+// course 1. Everything that has to sit on the road - camera, contact shadow,
+// shadow map target - goes through this.
+function surfaceUnder(frac, x, z){
+  return ELEVATED ? deckYAt(frac) : heightAt(x, z);
+}
+// Height of the deck at a fractional station, used by the car and the camera.
+function deckYAt(idx){
+  const n = SAMPLES;
+  const i0 = ((Math.floor(idx) % n) + n) % n, i1 = (i0+1) % n;
+  const f = idx - Math.floor(idx);
+  return trackData[i0].pos.y*(1-f) + trackData[i1].pos.y*f;
+}
+
 // finer than distToTrack(): walks the 2000-station mesh, so it is accurate to a
 // few metres and safe to use as a "is this on the road?" veto for scenery.
 function distToTrackFine(x, z){
@@ -540,9 +691,10 @@ for (let i=0;i<=MESH_SAMPLES;i++){
   // ~15 m tarmac bands, measured in metres rather than mesh stations so they do
   // not stretch when the circuit is scaled.
   const stripe = Math.floor(meshDist[i]/15) % 2 === 0 ? colA : colB;
-  positions.push(left.x, heightAt(left.x, left.z)+0.22, left.z);
+  const y0 = surfY(i, d.pos.x, d.pos.z) + 0.22;
+  positions.push(left.x, ELEVATED ? y0 : heightAt(left.x, left.z)+0.22, left.z);
   colors.push(stripe.r, stripe.g, stripe.b);
-  positions.push(rightP.x, heightAt(rightP.x, rightP.z)+0.22, rightP.z);
+  positions.push(rightP.x, ELEVATED ? y0 : heightAt(rightP.x, rightP.z)+0.22, rightP.z);
   colors.push(stripe.r, stripe.g, stripe.b);
 }
 for (let i=0;i<MESH_SAMPLES;i++){
@@ -572,9 +724,9 @@ function buildCurb(sideSign){
     // biggest speed cue in a cockpit view.
     const col = Math.floor(meshDist[i]/5)%2===0 ? new THREE.Color(0xd0202a)
                                                 : new THREE.Color(0xf2f4f6);
-    cPositions.push(base.x, heightAt(base.x, base.z)+0.24, base.z);
+    cPositions.push(base.x, surfY(i, base.x, base.z)+0.24, base.z);
     cColors.push(col.r,col.g,col.b);
-    cPositions.push(outer.x, heightAt(outer.x, outer.z)+0.24, outer.z);
+    cPositions.push(outer.x, surfY(i, outer.x, outer.z)+0.24, outer.z);
     cColors.push(col.r,col.g,col.b);
   }
   for (let i=0;i<MESH_SAMPLES;i++){
@@ -611,7 +763,9 @@ const tyreCapMats = [
 const roadside = new THREE.Group();
 const obstacles = []; // {pos: Vector2(x,z), radius, mesh, type, knockedT, disabled}
 let tyreIdx = 0;
-for (let i=0;i<SAMPLES;i+=6){
+// Tyre stacks stand on the ground beside a normal circuit; there is no ground
+// beside this one, so the barrier is the only thing at the edge of the deck.
+for (let i=0;i<SAMPLES && !ELEVATED;i+=6){
   const d = trackData[i];
   [1,-1].forEach(side=>{
     const offset = clampOff(i*MESH_PER_SAMPLE, side, TRACK_HALF_WIDTH + 7, TRACK_HALF_WIDTH + 3);
@@ -852,7 +1006,10 @@ const stands = new THREE.Group();
 const STAND_LEN = 46;
 const STAND_DEPTH = 20;
 const STAND_CLEAR = FENCE_OFF + 2;   // must not come inside the catch fencing
-for (let i=0;i<SAMPLES;i+=30){
+// No grandstands or pit complex on this circuit: both are placed by walking
+// out sideways from the centreline onto the terrain, which on a viaduct puts
+// them in mid-air. The loop is kept but never entered.
+for (let i=0;i<SAMPLES && !ELEVATED;i+=30){
   const d = trackData[i];
   const off = FENCE_OFF + 13;
   // pick whichever side is outside the loop
@@ -885,9 +1042,10 @@ for (let i=0;i<SAMPLES;i+=30){
 }
 scene.add(stands);
 
-// --- pit complex on the inside of the start/finish straight ---
+// Skipped here: like the grandstands it is placed by stepping sideways off the
+// centreline onto the terrain, and this circuit has no terrain beside it.
 const pit = new THREE.Group();
-{
+if (!ELEVATED) {
   const d = trackData[6];
   const off = TRACK_HALF_WIDTH + 30;
   const cand = [1,-1].map(sgn => d.pos.clone().add(d.right.clone().multiplyScalar(sgn*off)));
@@ -1117,10 +1275,12 @@ function buildVertRibbon(sideSign, off, yLo, yHi, colorFn, mat, withUV, uvRepeat
     const mi = (k*RIB_STEP) % MESH_SAMPLES;
     const d = meshData[mi];
     const b = d.pos.clone().add(d.right.clone().multiplyScalar(sideSign*offVal(off, mi)));
-    const base = heightAt(b.x, b.z);
+    const base = surfY(mi, b.x, b.z);
     const c = colorFn(k);
-    pos.push(b.x, base+yLo, b.z); col.push(c.r,c.g,c.b);
-    pos.push(b.x, base+yHi, b.z); col.push(c.r,c.g,c.b);
+    // yLo/yHi may also be functions of the station, which is how the catch
+    // fencing is dropped to nothing across the gorge bridge
+    pos.push(b.x, base+offVal(yLo, mi), b.z); col.push(c.r,c.g,c.b);
+    pos.push(b.x, base+offVal(yHi, mi), b.z); col.push(c.r,c.g,c.b);
     if (withUV){ const u = k*uvRepeat; uv.push(u,0, u,1); }
   }
   for (let k=0;k<RIB_COUNT;k++){
@@ -1147,8 +1307,9 @@ function buildFlatRibbon(offInner, offOuter, yOff, colorFn, mat){
     const a = d.pos.clone().add(d.right.clone().multiplyScalar(offVal(offInner, mi)));
     const b = d.pos.clone().add(d.right.clone().multiplyScalar(offVal(offOuter, mi)));
     const c = colorFn(k);
-    pos.push(a.x, heightAt(a.x,a.z)+yOff, a.z); col.push(c.r,c.g,c.b);
-    pos.push(b.x, heightAt(b.x,b.z)+yOff, b.z); col.push(c.r,c.g,c.b);
+    const base = surfY(mi, d.pos.x, d.pos.z);
+    pos.push(a.x, base+yOff, a.z); col.push(c.r,c.g,c.b);
+    pos.push(b.x, base+yOff, b.z); col.push(c.r,c.g,c.b);
   }
   for (let k=0;k<RIB_COUNT;k++){
     const a=k*2, b=k*2+1, c=k*2+2, d=k*2+3;
@@ -1218,14 +1379,17 @@ const FENCE_UV = (RIB_STEP*(MESH_LEN/MESH_SAMPLES))/7.2;
 // the fencing now stands well back from the barrier instead of right on top of
 // it, so it stops crowding the edge of the frame
 const fenceOffAt = (s) => (i) => clampOff(i, s, FENCE_OFF, WALL_MIN + FENCE_GAP);
-[1,-1].forEach(s=>{
+// Course 2 carries no catch fencing anywhere: it is a viaduct with a solid
+// barrier at the edge of the deck, and the fencing was walling the driver in on
+// a circuit whose whole point is the view out over the valley and the ramps.
+if (!ELEVATED) [1,-1].forEach(s=>{
   buildVertRibbon(s, fenceOffAt(s), WALL_H + 0.30, WALL_H + 7.2,
                   ()=>WHITE, fenceMat, true, FENCE_UV);
 });
 
 // fence posts, merged into one mesh per side
 const postMat = lpMat(0x59636b);
-[1,-1].forEach(s=>{
+if (!ELEVATED) [1,-1].forEach(s=>{
   const geos = [];
   // one post every ~20 m instead of every ~140 m: the posts flicking past are
   // one of the strongest speed cues in the frame.
@@ -1233,7 +1397,7 @@ const postMat = lpMat(0x59636b);
     const mi = (k*RIB_STEP) % MESH_SAMPLES;
     const d = meshData[mi];
     const b = d.pos.clone().add(d.right.clone().multiplyScalar(s*fenceOffAt(s)(mi)));
-    const base = heightAt(b.x, b.z);
+    const base = surfY(mi, b.x, b.z);
     const g = new THREE.BoxGeometry(0.34, 7.6, 0.34);
     g.translate(b.x, base + WALL_H + 3.6, b.z);
     geos.push(g);
@@ -1245,6 +1409,175 @@ const postMat = lpMat(0x59636b);
     geos.forEach(g=>g.dispose());
   }
 });
+
+// ---------- viaduct: the structure the whole circuit is carried on ----------
+// The road here is not laid on the ground, so it needs an underside, side skirts
+// and piers. Piers are placed only where they would not come down through a
+// lower deck: at the two spirals the turns sit directly on top of one another,
+// so those piers step out sideways and reach back in on a cantilevered head.
+(function viaduct(){
+  if (!ELEVATED) return;
+  const DECK = 2.4;                       // structural depth below the road
+  const deckCol  = new THREE.Color(0x8d949b);
+  const skirtCol = new THREE.Color(0x767d84);
+  const deckMat = new THREE.MeshLambertMaterial({ vertexColors:true, side:THREE.DoubleSide });
+  const edgeAt = (sgn) => (i) => clampOff(i, sgn, WALL_OFF, WALL_MIN) + 0.6;
+
+  // soffit and the two side faces
+  buildFlatRibbon((i)=>-edgeAt(-1)(i), (i)=>edgeAt(1)(i), -DECK, ()=>deckCol, deckMat);
+  [1,-1].forEach(sg=>{
+    buildVertRibbon(sg, edgeAt(sg), -DECK, 0.06, ()=>skirtCol, deckMat);
+  });
+
+  // does a pier dropped at (x,z) from height topY pass through another deck?
+  function pierBlocked(x, z, topY){
+    for (let j=0;j<MESH_SAMPLES;j+=6){
+      const q = meshData[j];
+      if (q.pos.y > topY - 4) continue;                 // at or above us: not in the way
+      const dx = x - q.pos.x, dz = z - q.pos.z;
+      if (dx*dx + dz*dz < (WALL_OFF + 5)*(WALL_OFF + 5)) return true;
+    }
+    return false;
+  }
+
+  const geos = [];
+  const scratch = new THREE.Object3D();
+  for (let k=0;k<RIB_COUNT;k+=6){                        // a pier about every 50 m
+    const mi = (k*RIB_STEP) % MESH_SAMPLES;
+    const d  = meshData[mi];
+    const topY = d.pos.y - DECK;
+    // straight down first, then stepped out to either side
+    let lateral = null;
+    for (const off of [0, WALL_OFF + 9, -(WALL_OFF + 9)]){
+      const px = d.pos.x + d.right.x*off, pz = d.pos.z + d.right.z*off;
+      if (!pierBlocked(px, pz, topY)){ lateral = off; break; }
+    }
+    if (lateral === null) continue;                      // nowhere clear: skip this bay
+    const px = d.pos.x + d.right.x*lateral, pz = d.pos.z + d.right.z*lateral;
+    const ground = heightAt(px, pz) - 0.6;
+    const h = topY - ground;
+    if (h < 2.5) continue;                               // practically on the ground
+    if (h > 46) continue;                                // over the river: let it span
+
+    const col = new THREE.CylinderGeometry(2.2, 3.1, h, 8);
+    col.translate(px, ground + h/2, pz);
+    geos.push(col);
+
+    // pier head: reaches from the column back under the centre of the deck
+    const reach = Math.abs(lateral) + 6;
+    const cap = new THREE.BoxGeometry(reach, 1.5, 6.5);
+    scratch.position.set((d.pos.x + px)/2, topY - 0.75, (d.pos.z + pz)/2);
+    scratch.rotation.set(0, Math.atan2(d.right.x, d.right.z), 0);
+    scratch.updateMatrix();
+    cap.applyMatrix4(scratch.matrix);
+    geos.push(cap);
+  }
+  if (geos.length){
+    const piers = new THREE.Mesh(mergeGeos(geos),
+      new THREE.MeshLambertMaterial({ color: 0x9aa1a8 }));
+    piers.castShadow = true; piers.receiveShadow = true;
+    scene.add(piers);
+    geos.forEach(g=>g.dispose());
+  }
+})();
+
+// ---------- the gorge: river, falls and the ridge peaks ----------
+(function gorgeScenery(){
+  if (!SCENERY) return;
+  const grp = new THREE.Group();
+  const waterMat = new THREE.MeshLambertMaterial({ color:0x2f6f9e });
+  const foamMat  = new THREE.MeshLambertMaterial({ color:0xdff0fb });
+  const rockMat  = new THREE.MeshLambertMaterial({ color:0x6f736d });
+  const peakMat  = new THREE.MeshLambertMaterial({ color:0x4f7a5d });
+  const capMat   = new THREE.MeshLambertMaterial({ color:0xe8eef2 });
+
+  // --- river along the floor, following the bed rather than a flat plane ---
+  const pos=[], idx=[];
+  const zStart = GORGE.head + 12, zEnd = GORGE.tail - 120, ST = 24;
+  let row = 0;
+  for (let z=zStart; z<=zEnd; z+=ST, row++){
+    for (const sgn of [-1, 1]){
+      const x = GORGE.x + sgn*GORGE.floorHalf*0.78;
+      pos.push(x, heightAt(x, z) + 0.5, z);
+    }
+    if (row > 0){
+      const a0=(row-1)*2, b0=a0+1, c0=row*2, d0=c0+1;
+      idx.push(a0,b0,c0, b0,d0,c0);
+    }
+  }
+  const rg = new THREE.BufferGeometry();
+  rg.setIndex(idx);
+  rg.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+  rg.computeVertexNormals();
+  const river = new THREE.Mesh(rg, waterMat);
+  river.receiveShadow = true;
+  grp.add(river);
+
+  // --- the falls, dropping over the cliff at the head of the gorge ---
+  const rimY   = heightAt(GORGE.x, GORGE.head - 45);
+  const floorY = heightAt(GORGE.x, GORGE.head + 60) + 0.5;
+  const fallH  = rimY - floorY;
+  const fallZ  = GORGE.head + 7;
+  [[16, 0], [7, -13], [5, 12]].forEach(([w, dx], i)=>{
+    const fall = new THREE.Mesh(new THREE.BoxGeometry(w, fallH*(i?0.86:1), 1.6),
+                                i ? foamMat : waterMat);
+    fall.position.set(GORGE.x + dx, floorY + fallH*(i?0.43:0.5) + (i?fallH*0.07:0), fallZ + i*1.2);
+    grp.add(fall);
+  });
+  // lip at the crest and the plunge pool below
+  const lip = new THREE.Mesh(new THREE.BoxGeometry(30, 1.2, 7), waterMat);
+  lip.position.set(GORGE.x, rimY + 0.2, GORGE.head - 2);
+  grp.add(lip);
+  const pool = new THREE.Mesh(new THREE.CylinderGeometry(34, 30, 1.2, 14), waterMat);
+  pool.position.set(GORGE.x, floorY + 0.2, fallZ + 26);
+  grp.add(pool);
+  const foam = new THREE.Mesh(new THREE.CylinderGeometry(15, 11, 1.6, 12), foamMat);
+  foam.position.set(GORGE.x, floorY + 0.7, fallZ + 12);
+  grp.add(foam);
+  // spray, as a few chunky blocks at the base
+  for (let i=0;i<7;i++){
+    const sc = 3 + (i%3)*2.4;
+    const b = new THREE.Mesh(new THREE.BoxGeometry(sc*2, sc, sc*1.6), foamMat);
+    b.position.set(GORGE.x + Math.sin(i*2.3)*16, floorY + 2 + (i%4)*3.4, fallZ + 6 + (i%3)*7);
+    grp.add(b);
+  }
+  // boulders scattered along the bed
+  for (let i=0;i<26;i++){
+    const z = zStart + 40 + i*((zEnd-zStart-60)/26);
+    const x = GORGE.x + Math.sin(i*1.7)*GORGE.floorHalf*0.8;
+    const r = 2.6 + (i%4)*1.5;
+    const b = new THREE.Mesh(new THREE.DodecahedronGeometry(r, 0), rockMat);
+    b.position.set(x, heightAt(x, z) + r*0.35, z);
+    b.rotation.set(i*0.7, i*1.1, i*0.4);
+    b.castShadow = true;
+    grp.add(b);
+  }
+
+  // --- peaks standing on the ridge the transfer crosses ---
+  for (let i=0;i<14;i++){
+    const t = (i+0.5)/14;
+    const bx = RIDGE.ax + (RIDGE.bx-RIDGE.ax)*t;
+    const bz = RIDGE.az + (RIDGE.bz-RIDGE.az)*t;
+    const side = (i%2 ? 1 : -1) * (70 + (i%3)*46);
+    const nx = -(RIDGE.bz-RIDGE.az), nz = (RIDGE.bx-RIDGE.ax);
+    const nl = Math.hypot(nx, nz);
+    const px = bx + nx/nl*side, pz = bz + nz/nl*side;
+    if (distToTrackFine(px, pz) < 110) continue;    // keep the road corridor clear
+    const h = 34 + (i%4)*16;
+    const peak = new THREE.Mesh(new THREE.ConeGeometry(h*0.62, h, 5), peakMat);
+    peak.position.set(px, heightAt(px, pz) + h/2 - 2, pz);
+    peak.rotation.y = i*0.6;
+    peak.castShadow = true;
+    grp.add(peak);
+    if (h > 55){
+      const cap = new THREE.Mesh(new THREE.ConeGeometry(h*0.62*0.32, h*0.3, 5), capMat);
+      cap.position.set(px, heightAt(px, pz) + h - 2 - h*0.15, pz);
+      cap.rotation.y = i*0.6;
+      grp.add(cap);
+    }
+  }
+  scene.add(grp);
+})();
 
 // ---------- start / signal gantries spanning the track ----------
 const steelMat = lpMat(0x4c545c);
@@ -1286,7 +1619,7 @@ function makeGantry(span){
   const half = Math.min(clampOff(mi, 1, WALL_OFF, WALL_MIN),
                         clampOff(mi, -1, WALL_OFF, WALL_MIN));
   const gt = makeGantry(2*(half + 0.9));
-  gt.position.set(d.pos.x, heightAt(d.pos.x, d.pos.z) - 0.1, d.pos.z);
+  gt.position.set(d.pos.x, surfY(mi, d.pos.x, d.pos.z) - 0.1, d.pos.z);
   gt.rotation.y = Math.atan2(d.tangent.x, d.tangent.z);
   scene.add(gt);
 });
@@ -1310,13 +1643,14 @@ function makeGantry(span){
   const solid = new THREE.Mesh(new THREE.BoxGeometry(TRACK_HALF_WIDTH*2, 0.08, 0.5), paint);
   solid.position.set(0, 0, 2.6);
   grp.add(solid);
-  grp.position.set(d0.pos.x, heightAt(d0.pos.x, d0.pos.z) + 0.30, d0.pos.z);
+  grp.position.set(d0.pos.x, surfY(0, d0.pos.x, d0.pos.z) + 0.30, d0.pos.z);
   grp.rotation.y = Math.atan2(tan.x, tan.z);
   scene.add(grp);
 })();
 
 // ---------- dense conifer line behind the fencing ----------
 (function treeLine(){
+  if (ELEVATED) return;   // nothing to plant on: the fencing is on a deck
   const coneGeo = new THREE.ConeGeometry(3.6, 11, 6);
   const trunkG  = new THREE.CylinderGeometry(0.5, 0.7, 3.2, 5);
   const cols = [0x2c6b38, 0x24592f, 0x367b3c];
@@ -1861,20 +2195,38 @@ window.addEventListener('orientationchange', ()=>setTimeout(applyCockpitLayout, 
 })();
 
 // ---------- helpers ----------
+// A circuit that passes over itself cannot be located by a global search on x/z:
+// at the spirals two stations share the same ground plan and only differ in
+// height, so the search would flip between decks. Instead it walks a window
+// around the station the car was on last frame, which is unambiguous - the two
+// decks are more than a kilometre apart measured along the lap.
+let carStation = 0;
+const STATION_WINDOW = 14;   // +-14 samples is about +-300 m at this spacing
 function nearestTrackInfo(pos){
-  // coarse search (fine enough for one car, 400 samples)
-  let best = 0, bestD = Infinity;
-  for (let i=0;i<SAMPLES;i++){
+  let best = carStation, bestD = Infinity;
+  const w = ELEVATED ? STATION_WINDOW : SAMPLES/2;
+  for (let k=-w;k<=w;k++){
+    const i = ((carStation + k) % SAMPLES + SAMPLES) % SAMPLES;
     const dx = pos.x - trackData[i].pos.x;
     const dz = pos.z - trackData[i].pos.z;
     const dd = dx*dx+dz*dz;
     if (dd < bestD){ bestD = dd; best = i; }
   }
+  carStation = best;
   const d = trackData[best];
   const rel = pos.clone().sub(d.pos);
   const lateral = rel.dot(d.right);
-  return { index: best, dist: d.dist, lateral };
+  // Where the car sits between this station and the next. Stations are ~22 m
+  // apart and the ramps climb at 2.35%, so without this the eye height would
+  // jump half a metre at every station boundary.
+  const nx = trackData[(best+1)%SAMPLES].pos;
+  const abx = nx.x - d.pos.x, abz = nx.z - d.pos.z;
+  const len2 = abx*abx + abz*abz;
+  let t = len2 > 1e-6 ? ((pos.x - d.pos.x)*abx + (pos.z - d.pos.z)*abz)/len2 : 0;
+  t = Math.max(-1, Math.min(1, t));
+  return { index: best, frac: best + t, dist: d.dist + t*SEG_LEN, lateral };
 }
+const SEG_LEN = TRACK_TOTAL_LEN/SAMPLES;
 
 // lap tracking
 let lap = 1;
@@ -1887,7 +2239,7 @@ const clock = new THREE.Clock();
 let bounceT = 0;
 let wheelSpin = 0;
 const EYE_HEIGHT = 4.0;   // driver's eye above the road (was 3.0)
-let camPitchY = heightAt(trackData[0].pos.x, trackData[0].pos.z) + EYE_HEIGHT;
+let camPitchY = surfaceUnder(0, trackData[0].pos.x, trackData[0].pos.z) + EYE_HEIGHT;
 let impactShake = 0; // decays each frame, adds camera kick on collision
 const CAR_RADIUS = 0.85;
 
@@ -1921,10 +2273,20 @@ function animate(){
       if (car.speed > 0) car.speed = Math.max(0, car.speed - drag*dt);
       else if (car.speed < 0) car.speed = Math.min(0, car.speed + drag*dt);
     }
-    // slope affects speed: climbs bleed momentum, descents build it
-    const hHere = heightAt(car.pos.x, car.pos.z);
-    const hNext = heightAt(car.pos.x + Math.sin(car.heading)*8, car.pos.z + Math.cos(car.heading)*8);
-    const slope = (hNext - hHere)/8;
+    // Slope affects speed: climbs bleed momentum, descents build it. It is read
+    // off the deck rather than the terrain, and scaled by how closely the car is
+    // pointed along the road so that crossing it diagonally is not a free climb.
+    let slope;
+    if (ELEVATED){
+      const tg = trackData[info.index].tangent;
+      const align = Math.sin(car.heading)*tg.x + Math.cos(car.heading)*tg.z;
+      slope = ((deckYAt(info.frac + 1) - deckYAt(info.frac))/SEG_LEN) * align;
+    } else {
+      const hHere = heightAt(car.pos.x, car.pos.z);
+      const hNext = heightAt(car.pos.x + Math.sin(car.heading)*8,
+                             car.pos.z + Math.cos(car.heading)*8);
+      slope = (hNext - hHere)/8;
+    }
     car.speed -= slope * 26 * dt;
     car.speed = Math.max(Math.min(car.speed, MAX_SPEED), -REVERSE_MAX);
     // Off-track the speed cap is not applied instantly: the car bleeds down to
@@ -2045,7 +2407,7 @@ function animate(){
     const camPos = car.pos.clone();
     camPos.x += Math.sin(car.heading)*forwardOffset;
     camPos.z += Math.cos(car.heading)*forwardOffset;
-    camPos.y = heightAt(camPos.x, camPos.z) + eyeHeight;
+    camPos.y = surfaceUnder(info.frac, camPos.x, camPos.z) + eyeHeight;
 
     // subtle bounce for speed sensation
     bounceT += dt * (7 + speedRatio*13);
@@ -2055,11 +2417,12 @@ function animate(){
     camera.position.copy(camPos);
 
     // contact shadow follows the car, offset away from the sun
-    carShadow.position.set(car.pos.x + 1.1, heightAt(car.pos.x, car.pos.z) + 0.30, car.pos.z - 0.8);
+    carShadow.position.set(car.pos.x + 1.1,
+      surfaceUnder(info.frac, car.pos.x, car.pos.z) + 0.30, car.pos.z - 0.8);
     carShadow.rotation.z = -car.heading;
 
     // keep the single shadow map centred on the car
-    sun.target.position.set(car.pos.x, heightAt(car.pos.x, car.pos.z), car.pos.z);
+    sun.target.position.set(car.pos.x, surfaceUnder(info.frac, car.pos.x, car.pos.z), car.pos.z);
     sun.target.updateMatrixWorld();
     sun.position.set(car.pos.x - 260, 150, car.pos.z + 150);
 
@@ -2067,7 +2430,8 @@ function animate(){
     const LOOK_AHEAD = 14;
     const aheadX = car.pos.x + Math.sin(car.heading)*LOOK_AHEAD;
     const aheadZ = car.pos.z + Math.cos(car.heading)*LOOK_AHEAD;
-    const aheadY = heightAt(aheadX, aheadZ) + eyeHeight;
+    const aheadY = (ELEVATED ? deckYAt(info.frac + LOOK_AHEAD/SEG_LEN)
+                              : heightAt(aheadX, aheadZ)) + eyeHeight;
     // smooth the pitch so bumps don't snap the horizon around
     camPitchY += (aheadY - camPitchY) * Math.min(1, dt*3.5);
     const lookTarget = new THREE.Vector3(aheadX, camPitchY, aheadZ);
@@ -2135,11 +2499,26 @@ function animate(){
 animate();
 
 // ---------- start ----------
-document.getElementById('startBtn').addEventListener('click', ()=>{
+function beginRace(){
   document.getElementById('title').style.display = 'none';
   document.getElementById('stickZone').style.pointerEvents = 'all';
   started = true;
+}
+document.getElementById('startBtn').addEventListener('click', beginRace);
+
+// Course buttons: the one already loaded just starts, the other reloads with
+// ?course=N&start=1 so the new circuit builds and drops straight into the race.
+document.getElementById('courseTag').textContent =
+  COURSE_NAMES[COURSE_ID] + " - DRIVER'S EYE VIEW";
+document.querySelectorAll('.courseBtn').forEach(btn=>{
+  const id = Number(btn.dataset.course);
+  if (id === COURSE_ID) btn.classList.add('on');
+  btn.addEventListener('click', ()=>{
+    if (id === COURSE_ID) beginRace();
+    else location.search = '?course=' + id + '&start=1';
+  });
 });
+if (AUTOSTART) beginRace();
 
 })();
 </script>
