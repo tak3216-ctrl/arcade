@@ -8,7 +8,7 @@
   canvas { display:block; }
 
   #hud {
-    position:fixed; inset:0; pointer-events:none; color:#fff;
+    position:fixed; inset:0; pointer-events:none; color:#fff; z-index:30;
   }
 
   /* ---- flat arcade panels: hard edges, saturated fills, no glow ---- */
@@ -30,11 +30,25 @@
     height:100%; width:0%; background:#e0201c;
   }
 
+  /* LAP panel and the back button sit in one row so the button always lands
+     just to the right of the panel, whatever the lap counter reads. */
+  #topLeft {
+    position:absolute; left:20px; top:18px;
+    display:flex; align-items:stretch; gap:10px;
+  }
   #lapBox {
-    position:absolute; left:20px; top:18px; font-size:16px; font-weight:900;
+    font-size:16px; font-weight:900;
     letter-spacing:3px; background:#12242f; border:3px solid #ffffff;
     padding:5px 14px 7px;
   }
+  #backBtn {
+    pointer-events:all; display:flex; align-items:center; text-decoration:none;
+    font-size:16px; font-weight:900; font-style:italic; letter-spacing:3px;
+    color:#ffffff; background:#e0201c; border:3px solid #ffffff;
+    padding:0 18px; cursor:pointer; white-space:nowrap;
+    -webkit-tap-highlight-color:transparent;
+  }
+  #backBtn:active { background:#a5161f; }
   #lapBox .big { font-size:30px; font-weight:900; font-style:italic; color:#ffd21f; }
 
   #minimap {
@@ -51,7 +65,7 @@
   }
 
   #title {
-    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:40;
     text-align:center; color:#fff; pointer-events:all;
     background:rgba(10,32,52,0.72); border:4px solid #ffffff;
     padding:34px 56px;
@@ -77,7 +91,7 @@
   }
 
   #touch {
-    position:fixed; inset:0; pointer-events:none; display:none;
+    position:fixed; inset:0; pointer-events:none; display:none; z-index:20;
   }
   .tbtn {
     position:absolute; width:78px; height:78px; border-radius:50%;
@@ -87,6 +101,15 @@
   }
   #btnBrake { right:18px; bottom:130px; }
   #btnGas   { right:110px; bottom:130px; }
+
+  /* Portrait on a touch screen only: pedals at double size. Side by side they
+     would then reach across into the left-hand steering zone, so they stack. */
+  @media (pointer: coarse) and (orientation: portrait) {
+    .tbtn { width:156px; height:156px; font-size:52px; border-width:4px; }
+    /* raised clear of the speed panel, which occupies the bottom right corner */
+    #btnGas   { right:20px; bottom:324px; }
+    #btnBrake { right:20px; bottom:150px; }
+  }
 
   /* left half of the screen = floating steering stick zone */
   #stickZone {
@@ -110,7 +133,7 @@
   #stickBase.on, #stickKnob.on { opacity:1; }
 
   #speedlines {
-    position:fixed; inset:0; pointer-events:none; opacity:0;
+    position:fixed; inset:0; pointer-events:none; opacity:0; z-index:10;
     background: radial-gradient(circle at 50% 46%, transparent 0%, transparent 22%, rgba(255,255,255,0.10) 46%, rgba(255,255,255,0.60) 100%);
     mix-blend-mode: screen;
   }
@@ -119,7 +142,10 @@
 <body>
 
 <div id="hud">
-  <div id="lapBox">LAP <span class="big" id="lapNum">1</span>/3</div>
+  <div id="topLeft">
+    <div id="lapBox">LAP <span class="big" id="lapNum">1</span>/3</div>
+    <a id="backBtn" href="https://tak3216-ctrl.github.io/arcade/">&#9664; 戻る</a>
+  </div>
   <canvas id="minimap" width="150" height="150"></canvas>
   <div id="offroad">OFF ROAD</div>
   <div id="speedBox">
@@ -1346,405 +1372,259 @@ function makeGantry(span){
 
 
 
-// ---------- F1 cockpit view (low-poly, reference-style framing) ----------
-// The whole cockpit hangs off the camera. The camera itself is pitched a little
-// nose-down so the horizon sits above the centre of the frame (that is what
-// gives the reference image its long view down the track); carFront is pitched
-// back by the same amount so the bodywork keeps its intended screen position.
+// ---------- F1 cockpit view (reference-style framing) ----------
+// Layout goal: huge front tires filling the left/right edges, the steering
+// wheel + dashboard low and centered, and the nose/front wing running away
+// from the driver between the tires.
 scene.add(camera);
-const CAM_PITCH = 0.15;   // nose-down pitch: a little more overhead (was 0.10)
+// The camera is pitched nose-down so the horizon sits above centre; carFront is
+// pitched back by the same amount so the car itself stays level with the road.
+const CAM_PITCH = 0.15;
 const carFront = new THREE.Group();
 carFront.rotation.x = CAM_PITCH;
 camera.add(carFront);
 
-// Bodywork, wheels, mirrors and dash panel live in this group; the steering
-// wheel and the driver's arms stay on carFront at full size. Scaling the group
-// (rather than each mesh) shrinks the positions along with the geometry, so the
-// whole car stays self-consistent.
-const BODY_SCALE = 0.7;
-const carBody = new THREE.Group();
-carBody.scale.setScalar(BODY_SCALE);
-// The driver sits further forward and higher relative to the bodywork. Scaling
-// the body to 70% had pulled the nose spine up to y=-0.224 while the wheel rim
-// sits at -0.37, so the chassis was standing in front of the wheel. Dropping the
-// body 0.32 puts every red panel below the line of sight to the bottom of the
-// wheel; the small +z shift moves the tub's leading edge nearer, which drops its
-// silhouette further down the frame.
-carBody.position.set(0, -0.32, 0.10);
-carFront.add(carBody);
+const carbonMat  = new THREE.MeshLambertMaterial({ color: 0x181a1d });
+const carbonMat2 = new THREE.MeshLambertMaterial({ color: 0x232629 });
+const accentMat  = new THREE.MeshLambertMaterial({ color: 0x8a1220 });
 
-// front wheel placement, kept here because the off-track test is derived from it
-const WHEEL_X      = 1.05;   // hub distance from the centreline (1.70 -> 1.34 -> 1.05)
-const WHEEL_HALF_W = 0.13;   // half tread width after the 0.5 wheel scale
-
-// --- palette: saturated flat-shaded livery, matte carbon fittings ---
-const bodyRed   = new THREE.MeshLambertMaterial({ color:0xd0202a, side:THREE.DoubleSide });
-const bodyRedD  = new THREE.MeshLambertMaterial({ color:0x9e141d, side:THREE.DoubleSide });
-const bodyRedL  = new THREE.MeshLambertMaterial({ color:0xe8483c, side:THREE.DoubleSide });
-const carbonMat  = new THREE.MeshLambertMaterial({ color:0x1b1e22 });
-const carbonMat2 = new THREE.MeshLambertMaterial({ color:0x2c3136 });
-const carbonMat3 = new THREE.MeshLambertMaterial({ color:0x3d444b });
-const accentMat  = bodyRedD;
-
-// --- loft helper: stacks cross sections into a faceted hull ---
-function loftGeo(stations){
-  const N = stations[0].pts.length;
-  const pos = [];
-  const push = p => pos.push(p[0], p[1], p[2]);
-  for (let s=0; s<stations.length-1; s++){
-    const A = stations[s], B = stations[s+1];
-    for (let i=0;i<N;i++){
-      const j = (i+1)%N;
-      const a=[A.pts[i][0],A.pts[i][1],A.z], b=[A.pts[j][0],A.pts[j][1],A.z];
-      const c=[B.pts[j][0],B.pts[j][1],B.z], d=[B.pts[i][0],B.pts[i][1],B.z];
-      push(a); push(b); push(c);
-      push(a); push(c); push(d);
-    }
-  }
-  [0, stations.length-1].forEach(si=>{
-    const S = stations[si];
-    for (let i=1;i<N-1;i++){
-      push([S.pts[0][0],   S.pts[0][1],   S.z]);
-      push([S.pts[i][0],   S.pts[i][1],   S.z]);
-      push([S.pts[i+1][0], S.pts[i+1][1], S.z]);
-    }
-  });
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
-  g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array((pos.length/3)*2), 2));
-  g.computeVertexNormals();
-  return g;
-}
-// hexagonal body section: flat belly, angled flanks, raised centre spine
-function hexProfile(cy, w, top, up, dn){
-  return [
-    [-w, cy], [-w*0.72, cy+up], [0, cy+top],
-    [ w*0.72, cy+up], [ w, cy], [0, cy-dn],
-  ];
-}
-// tapered strut / limb between two points, low segment count so it reads faceted
-function limb(a, b, r0, r1, mat, seg){
-  const dir = new THREE.Vector3().subVectors(b, a);
-  const len = dir.length();
-  const m = new THREE.Mesh(new THREE.CylinderGeometry(r1, r0, len, seg||5, 1, false), mat);
-  m.position.copy(a).add(b).multiplyScalar(0.5);
-  m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir.normalize());
-  return m;
-}
-
-// ---- nose / chassis running away from the driver ----
-// The spine sits just under the eye line and stays level, so in perspective it
-// converges on the horizon exactly like the reference painting.
+// ---- nose / chassis running forward between the wheels ----
 const noseGroup = new THREE.Group();
-carBody.add(noseGroup);
+carFront.add(noseGroup);
 
-const noseStations = [
-  { z: 0.70, pts: hexProfile(-0.48, 0.57, 0.16, 0.11, 1.02) },   // behind the eye: cap never seen
-  { z:-0.95, pts: hexProfile(-0.48, 0.55, 0.16, 0.11, 0.95) },
-  { z:-1.60, pts: hexProfile(-0.48, 0.50, 0.14, 0.09, 0.70) },
-  { z:-2.45, pts: hexProfile(-0.48, 0.36, 0.12, 0.08, 0.48) },
-  { z:-3.00, pts: hexProfile(-0.47, 0.22, 0.09, 0.06, 0.32) },
-  { z:-3.80, pts: hexProfile(-0.46, 0.10, 0.05, 0.03, 0.18) },
-];
-// Nose shortened from -4.40 to -3.80. The front wing has to be angularly wider
-// than the steering wheel to show either side of it: at the old tip distance a
-// track-width wing subtended 14.6 deg against the wheel's 19.5 deg and was
-// completely hidden behind it. At -3.80 the endplates clear the rim.
-const noseBody = new THREE.Mesh(loftGeo(noseStations), bodyRed);
-noseGroup.add(noseBody);
+// main chassis deck right in front of the cockpit opening
+const deck = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.16, 1.5), carbonMat);
+deck.position.set(0, -0.78, -1.35);
+noseGroup.add(deck);
 
-// darker flank panels tucked just outside the hull for facet contrast
-[-1,1].forEach(s=>{
-  const flank = new THREE.Mesh(loftGeo([
-    { z: 0.70, pts: hexProfile(-0.62, 0.560, 0.10, 0.06, 0.32) },
-    { z:-0.95, pts: hexProfile(-0.62, 0.545, 0.10, 0.06, 0.30) },
-    { z:-1.90, pts: hexProfile(-0.62, 0.455, 0.08, 0.05, 0.26) },
-    { z:-2.90, pts: hexProfile(-0.62, 0.290, 0.06, 0.04, 0.20) },
-  ]), bodyRedD);
-  flank.position.x = s*0.012;
-  noseGroup.add(flank);
-});
+// tapering nose sections toward the front wing
+const noseMid = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.13, 1.2), carbonMat);
+noseMid.position.set(0, -0.83, -2.55);
+noseGroup.add(noseMid);
 
-// Monocoque tub between the shoulders. The dash block used to plug this gap; with
-// it gone the road showed through the middle of the car, so a low, wide tub
-// closes the floor and the front bulkhead instead. Its top sits below the
-// steering wheel, so it costs far less of the view than the old block did.
-const tub = new THREE.Mesh(new THREE.BoxGeometry(1.36, 0.40, 2.50), bodyRedD);
-tub.position.set(0, -1.05, -0.45);
-carBody.add(tub);
-// The nose loft already closes its own belly (the hex profile has a bottom
-// vertex), so no extra floor is needed ahead of the tub.
+const noseTip = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.19, 0.9, 12), carbonMat);
+noseTip.rotation.x = Math.PI/2;
+noseTip.position.set(0, -0.86, -3.55);
+noseGroup.add(noseTip);
 
-// cockpit surround: wide red shoulders framing the lower corners of the frame
-[-1,1].forEach(s=>{
-  const sh = new THREE.Mesh(loftGeo([
-    { z: 0.85, pts: hexProfile(-0.74, 0.36, 0.32, 0.21, 0.58) },
-    { z:-0.55, pts: hexProfile(-0.72, 0.34, 0.30, 0.20, 0.55) },
-    { z:-1.05, pts: hexProfile(-0.66, 0.28, 0.24, 0.16, 0.45) },
-    { z:-1.60, pts: hexProfile(-0.62, 0.20, 0.18, 0.12, 0.35) },
-  ]), bodyRed);
-  sh.position.x = s*0.66;
-  carBody.add(sh);
-});
+// red accent stripes along the nose (livery cue like the reference)
+const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.02, 2.6), accentMat);
+stripe.position.set(-0.14, -0.695, -1.9); noseGroup.add(stripe);
+const stripe2 = stripe.clone(); stripe2.position.x = 0.14; noseGroup.add(stripe2);
 
-// The dash / steering-column block and its lip used to fill the bottom centre.
-// Once the bodywork went to 70% they sat closer to the eye than the wheel and
-// covered the road ahead, so they are gone: the steering wheel now reads as the
-// front of the cockpit.
+// cockpit surround / side pods framing the lower-left and lower-right
+const surroundGeo = new THREE.BoxGeometry(0.28, 0.5, 1.1);
+const surL = new THREE.Mesh(surroundGeo, carbonMat2); surL.position.set(-0.62, -0.95, -0.85); carFront.add(surL);
+const surR = new THREE.Mesh(surroundGeo, carbonMat2); surR.position.set( 0.62, -0.95, -0.85); carFront.add(surR);
 
-// The roll-hoop aerial used to stand here on the nose centreline. It drew a
-// black line straight up the middle of the road, so it has been removed.
+// front wing far ahead, low
+const wing = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.05, 0.55), carbonMat2);
+wing.position.set(0, -1.02, -4.05);
+noseGroup.add(wing);
+const flap = new THREE.Mesh(new THREE.BoxGeometry(2.15, 0.04, 0.3), accentMat);
+flap.position.set(0, -0.94, -3.85);
+noseGroup.add(flap);
+const epGeo = new THREE.BoxGeometry(0.06, 0.34, 0.6);
+const epL = new THREE.Mesh(epGeo, carbonMat); epL.position.set(-1.08, -0.88, -4.05); noseGroup.add(epL);
+const epR = new THREE.Mesh(epGeo, carbonMat); epR.position.set( 1.08, -0.88, -4.05); noseGroup.add(epR);
 
-// ---- front wing on the nose tip ----
-// There was never a front wing in this model: the nose simply tapered to a point.
-// Built here as a main plane, an upper flap and two endplates, sized so the
-// endplates appear just outside the steering wheel the way they do on a real
-// onboard shot.
-const mainPlane = new THREE.Mesh(new THREE.BoxGeometry(2.64, 0.07, 0.52), bodyRed);
-mainPlane.position.set(0, -0.76, -3.92);
-mainPlane.rotation.x = 0.05;
-noseGroup.add(mainPlane);
-const wingFlap = new THREE.Mesh(new THREE.BoxGeometry(2.40, 0.05, 0.28), bodyRedD);
-wingFlap.position.set(0, -0.665, -3.70);
-wingFlap.rotation.x = 0.18;
-noseGroup.add(wingFlap);
-[-1,1].forEach(s=>{
-  const ep = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.42, 0.66), bodyRed);
-  ep.position.set(s*1.40, -0.64, -3.88);
-  noseGroup.add(ep);
-  const cap = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.06, 0.66), bodyRedL);
-  cap.position.set(s*1.40, -0.42, -3.88);
-  noseGroup.add(cap);
-  // pylon down from the nose underside to the wing
-  noseGroup.add(limb(new THREE.Vector3(s*0.18, -0.60, -3.42),
-                     new THREE.Vector3(s*0.18, -0.74, -3.86), 0.05, 0.042, carbonMat, 4));
-});
+// roll-hoop camera pod on the nose centerline (thin antenna in the reference)
+const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.5, 6), carbonMat2);
+antenna.position.set(0, -0.44, -1.9);
+noseGroup.add(antenna);
 
-// ---- front tyres: big, right out at the edges of the frame ----
-const tireMat  = new THREE.MeshLambertMaterial({ color:0x141517 });
-const treadMat = new THREE.MeshLambertMaterial({ color:0x232528 });
-const rimMat   = new THREE.MeshLambertMaterial({ color:0x9e141d });
-const tireGeo  = new THREE.CylinderGeometry(0.58, 0.58, 0.52, 14);
-const suspMat  = carbonMat;
+// ---- front tires: slicks, half size, at the sides ahead of the driver ----
+// Half the original diameter, and smooth: the tread blocks that used to ring the
+// carcass are gone and the carcass itself is drawn with enough segments (and kept
+// out of the flat-shading pass below) to read as an unbroken slick.
+const tireMat = new THREE.MeshLambertMaterial({ color: 0x121212 });
+tireMat.userData.keepSmooth = true;
+const TIRE_R = 0.26, TIRE_W = 0.20;   // was 0.52 radius / 0.40 wide
+const tireGeo = new THREE.CylinderGeometry(TIRE_R, TIRE_R, TIRE_W, 40);
+// a slightly proud shoulder band each side, so the slick still catches the light
+const shoulderMat = new THREE.MeshLambertMaterial({ color: 0x1b1c1f });
+shoulderMat.userData.keepSmooth = true;
+const shoulderGeo = new THREE.CylinderGeometry(TIRE_R*0.995, TIRE_R*0.995, TIRE_W*0.30, 40);
+const rimMat  = new THREE.MeshLambertMaterial({ color: 0x9a1c24 });
+const rimGeo  = new THREE.TorusGeometry(0.18, 0.016, 6, 24);
+const suspMat = new THREE.MeshLambertMaterial({ color: 0x141414 });
 
 function makeFrontWheel(sign){
   const g = new THREE.Group();          // steering (yaw) pivot
-  const spin = new THREE.Group();       // rolling pivot about the X axle
+  const spin = new THREE.Group();       // rolling pivot: rotates about the X axle
   g.add(spin);
   g.userData.spin = spin;
 
   const t = new THREE.Mesh(tireGeo, tireMat);
-  t.rotation.z = Math.PI/2;
+  t.rotation.z = Math.PI/2;             // lay the cylinder on its side, axle along X
   spin.add(t);
 
-  // inner rim disc, seen edge-on from the cockpit
-  const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.06, 10), rimMat);
-  disc.rotation.z = Math.PI/2;
-  disc.position.x = sign * -0.25;
-  spin.add(disc);
-  const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.10, 0.12, 8), carbonMat3);
-  hub.rotation.z = Math.PI/2;
-  hub.position.x = sign * -0.27;
-  spin.add(hub);
+  // inner rim ring, visible edge-on like the reference photo
+  [-1, 1].forEach(sd=>{
+    const sh = new THREE.Mesh(shoulderGeo, shoulderMat);
+    sh.rotation.z = Math.PI/2;
+    sh.position.x = sd * TIRE_W*0.35;
+    spin.add(sh);
+  });
 
-  // sidewall marking band so the rotation reads
-  const band = new THREE.Mesh(new THREE.TorusGeometry(0.505, 0.028, 4, 18), rimMat);
-  band.rotation.y = Math.PI/2;
-  band.position.x = sign * -0.235;
-  spin.add(band);
+  const r = new THREE.Mesh(rimGeo, rimMat);
+  r.rotation.y = Math.PI/2;
+  r.position.x = sign * -0.105;
+  spin.add(r);
 
-  // chunky tread blocks
-  for (let i=0;i<10;i++){
-    const a = (i/10)*Math.PI*2;
-    const tb = new THREE.Mesh(new THREE.BoxGeometry(0.50, 0.07, 0.10), treadMat);
-    tb.position.set(0, Math.cos(a)*0.575, Math.sin(a)*0.575);
-    tb.rotation.x = -a;
-    spin.add(tb);
+  // spokes only - no tread blocks on a slick. They still show the wheel turning.
+  const spokeGeo = new THREE.BoxGeometry(0.015, 0.31, 0.025);
+  for (let i=0;i<5;i++){
+    const sp = new THREE.Mesh(spokeGeo, rimMat);
+    sp.rotation.z = Math.PI/2;
+    sp.rotation.x = (i/5)*Math.PI;
+    sp.position.x = sign * -0.105;
+    spin.add(sp);
   }
 
-  g.position.set(sign*WHEEL_X, -0.48, -1.50);
-  // half scale: the wheel keeps its hub position (so the wishbones still point
-  // at it) but takes up a quarter of the screen area it used to
-  g.scale.setScalar(0.5);
+  g.position.set(sign*1.08, -0.78, -1.6);
   return g;
 }
-const tireL = makeFrontWheel(-1); carBody.add(tireL);
-const tireR = makeFrontWheel( 1); carBody.add(tireR);
+const tireL = makeFrontWheel(-1); carFront.add(tireL);
+const tireR = makeFrontWheel( 1); carFront.add(tireR);
 
-// suspension: wishbones + pushrod from the chassis out to each upright
-[-1,1].forEach(s=>{
-  // wishbones and duct shortened to match the wheels' new inboard position
-  carBody.add(limb(new THREE.Vector3(s*0.50, -0.42, -1.30),
-                   new THREE.Vector3(s*0.92, -0.40, -1.50), 0.035, 0.025, suspMat, 4));
-  carBody.add(limb(new THREE.Vector3(s*0.50, -0.70, -1.32),
-                   new THREE.Vector3(s*0.92, -0.60, -1.50), 0.035, 0.025, suspMat, 4));
-  carBody.add(limb(new THREE.Vector3(s*0.52, -0.36, -1.42),
-                   new THREE.Vector3(s*0.88, -0.66, -1.52), 0.028, 0.022, carbonMat3, 4));
-  const duct = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.34, 0.40), carbonMat);
-  duct.position.set(s*0.90, -0.52, -1.50);
-  carBody.add(duct);
-});
+// suspension wishbones linking the chassis to each wheel
+function makeWishbone(sign, y, z){
+  const arm = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.035, 0.06), suspMat);
+  arm.position.set(sign*0.68, y, z);
+  arm.rotation.y = sign*0.12;
+  carFront.add(arm);
+}
+makeWishbone(-1, -0.66, -1.6); makeWishbone(1, -0.66, -1.6);
+makeWishbone(-1, -0.99, -1.62); makeWishbone(1, -0.99, -1.62);
 
-// The mirrors and their stalks are not built. At 70% body scale they ended up
-// well inside the field of view rather than out at its edges, and a mirror the
-// driver cannot use is not worth the two red blocks across the road.
+// ---- dashboard + steering wheel, low and centered ----
+const dashPanel = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.3, 0.22), carbonMat2);
+dashPanel.position.set(0, -0.76, -0.70);
+dashPanel.rotation.x = 0.28;
+carFront.add(dashPanel);
 
-// ---- steering wheel ----
 const steer = new THREE.Group();
-steer.position.set(0, -0.20, -0.55);   // raised, and 5 cm closer to the eye
-steer.rotation.x = -0.45;
-steer.scale.setScalar(0.72);
+steer.position.set(0, -0.50, -0.60);
+steer.rotation.x = -0.55; // tilted toward the driver
 carFront.add(steer);
 
-const gripMat = new THREE.MeshLambertMaterial({ color:0x18191c });
-const wheelBody = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.44, 0.05), carbonMat);
-wheelBody.position.y = -0.04;
-steer.add(wheelBody);
-const wheelTopBar = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.07, 0.09), gripMat);
-wheelTopBar.position.set(0, 0.165, 0.012);
-steer.add(wheelTopBar);
+// modern F1 "butterfly" wheel: side grips + flat top/bottom + center display
+const gripMat = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
 function grip(sign){
-  const g = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.30, 0.115), gripMat);
-  g.position.set(sign*0.275, -0.02, 0.03);
-  g.rotation.z = sign*0.10;
+  const g = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.30, 0.09), gripMat);
+  g.position.set(sign*0.26, -0.02, 0.02);
+  g.rotation.z = sign*0.12;
   return g;
 }
 steer.add(grip(-1), grip(1));
 
-// centre display (live canvas texture)
+const wheelBody = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.30, 0.05), carbonMat);
+steer.add(wheelBody);
+const wheelTopBar = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.06, 0.07), gripMat);
+wheelTopBar.position.set(0, 0.155, 0.01);
+steer.add(wheelTopBar);
+
+// center display (live canvas texture: gear / speed / rpm)
 const dashCanvas = document.createElement('canvas');
-dashCanvas.width = 320; dashCanvas.height = 200;
+dashCanvas.width = 256; dashCanvas.height = 160;
 const dctx = dashCanvas.getContext('2d');
 const dashTex = new THREE.CanvasTexture(dashCanvas);
-const dashScreen = new THREE.Mesh(new THREE.PlaneGeometry(0.315, 0.195),
+const dashScreen = new THREE.Mesh(new THREE.PlaneGeometry(0.30, 0.19),
   new THREE.MeshBasicMaterial({ map: dashTex }));
-dashScreen.position.set(0, 0.002, 0.028);
+dashScreen.position.set(0, -0.005, 0.027);
 steer.add(dashScreen);
 
-// shift-light strip across the top of the wheel
+// shift-light LED strip across the top of the wheel
 const leds = [];
-const ledGeo = new THREE.SphereGeometry(0.0145, 6, 5);
-const ledCols = [0x1fd455,0x1fd455,0x1fd455,0x1fd455,
-                 0xffd21f,0xffd21f,
-                 0xff8a1a,0xff8a1a,0xff5b1a,
-                 0xe0201c,0xe0201c,0xe0201c,0xe0201c];
-for (let i=0;i<ledCols.length;i++){
-  const m = new THREE.Mesh(ledGeo, new THREE.MeshBasicMaterial({ color: ledCols[i] }));
-  m.position.set(-0.144 + i*0.024, 0.118, 0.034);
-  m.userData.col = ledCols[i];
+const ledGeo = new THREE.SphereGeometry(0.011, 6, 6);
+for (let i=0;i<15;i++){
+  const col = i<5 ? 0x18e04a : (i<10 ? 0xff2a2a : 0x9a3cff);
+  const m = new THREE.Mesh(ledGeo, new THREE.MeshBasicMaterial({ color: col }));
+  m.position.set(-0.21 + i*0.03, 0.115, 0.03);
+  m.userData.col = col;
   steer.add(m);
   leds.push(m);
 }
 
-// coloured rotary/press buttons flanking the display
-const btnLeft  = [0x1f5fd0, 0x18a04a, 0xd8a81a];
-const btnRight = [0xc02020, 0x7a2fb0, 0xd8a81a];
-for (let i=0;i<3;i++){
-  const bl = new THREE.Mesh(new THREE.CylinderGeometry(0.024,0.024,0.016,8),
-    new THREE.MeshLambertMaterial({ color: btnLeft[i] }));
-  bl.rotation.x = Math.PI/2;
-  bl.position.set(-0.196, 0.045 - i*0.062, 0.036);
-  steer.add(bl);
-  const br = new THREE.Mesh(new THREE.CylinderGeometry(0.024,0.024,0.016,8),
-    new THREE.MeshLambertMaterial({ color: btnRight[i] }));
-  br.rotation.x = Math.PI/2;
-  br.position.set(0.196, 0.045 - i*0.062, 0.036);
-  steer.add(br);
-}
-// dark buttons up in the top corners
-[-1,1].forEach(s=>{
-  const b = new THREE.Mesh(new THREE.CylinderGeometry(0.028,0.028,0.016,8), carbonMat3);
+// small colored buttons like the reference wheel
+const btnColors = [0x18a04a, 0xd8b21a, 0x1f6fd0, 0xc02020, 0x8a3cd0];
+for (let i=0;i<6;i++){
+  const sgn = i%2===0 ? -1 : 1;
+  const b = new THREE.Mesh(new THREE.CylinderGeometry(0.014,0.014,0.012,8),
+    new THREE.MeshBasicMaterial({ color: btnColors[i%btnColors.length] }));
   b.rotation.x = Math.PI/2;
-  b.position.set(s*0.196, 0.118, 0.036);
+  b.position.set(sgn*0.185, 0.05 - Math.floor(i/2)*0.06, 0.035);
   steer.add(b);
-});
-// rotary knobs and the marshalling button along the bottom
-[-1,1].forEach(s=>{
-  const k = new THREE.Mesh(new THREE.CylinderGeometry(0.048,0.048,0.024,10), carbonMat3);
-  k.rotation.x = Math.PI/2;
-  k.position.set(s*0.093, -0.185, 0.034);
-  steer.add(k);
-  const notch = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.042, 0.012), gripMat);
-  notch.position.set(s*0.093, -0.163, 0.048);
-  steer.add(notch);
-});
-const redBtn = new THREE.Mesh(new THREE.CylinderGeometry(0.022,0.022,0.016,8),
-  new THREE.MeshLambertMaterial({ color:0xd0202a }));
-redBtn.rotation.x = Math.PI/2;
-redBtn.position.set(0, -0.205, 0.034);
-steer.add(redBtn);
-
-// ---- driver: red gloves on the grips, forearms sweeping in from the corners ----
-const gloveMat = new THREE.MeshLambertMaterial({ color:0xc9202a });
-const suitMat  = new THREE.MeshLambertMaterial({ color:0x8e1219 });   // darker race suit
-[-1,1].forEach(s=>{
-  const gl = new THREE.Mesh(new THREE.IcosahedronGeometry(0.085, 0), gloveMat);
-  gl.scale.set(0.95, 1.35, 1.0);
-  gl.position.set(s*0.275, -0.035, 0.085);
-  steer.add(gl);
-  const thumb = new THREE.Mesh(new THREE.IcosahedronGeometry(0.038, 0), gloveMat);
-  thumb.position.set(s*0.215, 0.055, 0.075);
-  steer.add(thumb);
-  // Forearm in carFront space so it does not swing with the wheel. The last pass
-  // pushed the elbow down to y=-1.50, which buried the arms inside the bodywork -
-  // they are back up at cockpit height, still slim, and in a darker suit red so
-  // they read against the red tub rather than merging into it.
-  carFront.add(limb(new THREE.Vector3(s*0.56, -0.47, -0.27),
-                    new THREE.Vector3(s*0.21, -0.23, -0.52), 0.115, 0.075, suitMat, 5));
-});
-
-function fmtLapTime(t){
-  const m = Math.floor(t/60);
-  const s = t - m*60;
-  return m + ':' + (s < 10 ? '0' : '') + s.toFixed(3);
 }
+
+// driver hands (gloves) on the grips
+const gloveMat = new THREE.MeshLambertMaterial({ color: 0x0d0d0d });
+function glove(sign){
+  const g = new THREE.Mesh(new THREE.SphereGeometry(0.075, 10, 8), gloveMat);
+  g.scale.set(0.8, 1.25, 0.9);
+  g.position.set(sign*0.27, -0.03, 0.055);
+  return g;
+}
+steer.add(glove(-1), glove(1));
+
 function drawDash(kmh, rpm, gear, lapStr, timeStr){
-  dctx.fillStyle = '#07090b'; dctx.fillRect(0,0,320,200);
-  dctx.fillStyle = '#12161a'; dctx.fillRect(6,6,308,188);
-
-  dctx.textAlign = 'left';
-  dctx.fillStyle = '#8d959c'; dctx.font = 'bold 17px Arial';
-  dctx.fillText('RPM', 16, 40);
-  dctx.fillStyle = '#f2f4f6'; dctx.font = 'bold 30px Arial';
-  dctx.fillText(String(rpm), 16, 74);
-
-  dctx.textAlign = 'right';
-  dctx.fillStyle = '#8d959c'; dctx.font = 'bold 17px Arial';
-  dctx.fillText('KM/H', 304, 40);
-  dctx.fillStyle = '#f2f4f6'; dctx.font = 'bold 30px Arial';
-  dctx.fillText(String(kmh), 304, 74);
-
+  dctx.fillStyle = '#050608'; dctx.fillRect(0,0,256,160);
+  dctx.fillStyle = '#ffffff';
+  dctx.font = 'bold 76px Arial';
   dctx.textAlign = 'center';
-  dctx.fillStyle = '#ffffff'; dctx.font = 'bold 74px Arial';
-  dctx.fillText(String(gear), 160, 74);
-
-  // segmented load bar
-  const segs = 16, ratio = Math.min(1, kmh/300);
-  for (let i=0;i<segs;i++){
-    const on = i < Math.round(ratio*segs);
-    dctx.fillStyle = on ? (i < 4 ? '#e0201c' : (i < 8 ? '#ff8a1a' : '#ffd21f')) : '#2a3138';
-    dctx.fillRect(16 + i*18.5, 92, 15, 16);
-  }
-
+  dctx.fillText(String(gear), 128, 88);
+  dctx.font = 'bold 22px Arial';
   dctx.textAlign = 'left';
-  dctx.fillStyle = '#8d959c'; dctx.font = 'bold 16px Arial';
-  dctx.fillText('LAP', 16, 140);
-  dctx.fillStyle = '#f2f4f6'; dctx.font = 'bold 27px Arial';
-  dctx.fillText(lapStr, 16, 172);
-
+  dctx.fillStyle = '#e8e8e8';
+  dctx.fillText(String(rpm), 8, 76);
   dctx.textAlign = 'right';
-  dctx.fillStyle = '#8d959c'; dctx.font = 'bold 16px Arial';
-  dctx.fillText('TIME', 304, 140);
-  dctx.fillStyle = '#f2f4f6'; dctx.font = 'bold 27px Arial';
-  dctx.fillText(timeStr, 304, 172);
-
+  dctx.fillText(String(kmh), 248, 76);
+  dctx.font = 'bold 13px Arial';
+  dctx.fillStyle = '#9aa0a6';
+  dctx.textAlign = 'left';  dctx.fillText('RPM', 8, 94);
+  dctx.textAlign = 'right'; dctx.fillText('KPH', 248, 94);
+  dctx.textAlign = 'center';
+  // lap / time in place of the old percentage + OVERTAKE lines
+  dctx.font = 'bold 13px Arial';
+  dctx.fillStyle = '#9aa0a6';
+  dctx.textAlign = 'left';  dctx.fillText('LAP', 8, 122);
+  dctx.textAlign = 'right'; dctx.fillText('TIME', 248, 122);
+  dctx.font = 'bold 20px Arial';
+  dctx.fillStyle = '#ffffff';
+  dctx.textAlign = 'left';  dctx.fillText(lapStr, 8, 146);
+  dctx.textAlign = 'right'; dctx.fillText(timeStr, 248, 146);
   dashTex.needsUpdate = true;
 }
 drawDash(0, 0, 'N', '1/3', '0:00.000');
 
-carFront.traverse(o=>{ if (o.isMesh) o.castShadow = true; });
+// ---- mirrors on stalks, just outside the cockpit ----
+const mirrorMat = new THREE.MeshLambertMaterial({ color: 0x0f0f0f });
+function makeMirror(sign){
+  const g = new THREE.Group();
+  const stalk = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.26, 6), mirrorMat);
+  stalk.rotation.z = sign*0.6;
+  g.add(stalk);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.10, 0.04),
+    new THREE.MeshLambertMaterial({ color: 0x2a2e33 }));
+  head.position.set(sign*0.14, 0.12, 0);
+  g.add(head);
+  g.position.set(sign*0.72, -0.46, -1.0);
+  return g;
+}
+carFront.add(makeMirror(-1), makeMirror(1));
 
 const VISUAL_STEER_MAX = 0.5; // radians (~29 degrees)
+
+// Footprint figures for the off-track test further down: hub distance from the
+// centreline, outer sidewall, and tread width of the halved slick.
+const WHEEL_X     = 1.08;
+const TYRE_OUTER  = WHEEL_X + TIRE_W/2;
+const TYRE_WIDTH  = TIRE_W;
+
+carFront.traverse(o=>{ if (o.isMesh) o.castShadow = true; });
+
+
 
 
 
@@ -1794,6 +1674,7 @@ const VISUAL_STEER_MAX = 0.5; // radians (~29 degrees)
     if (!o.isMesh || !o.material) return;
     const convert = (m)=>{
       if (!m || !m.isMeshLambertMaterial || m.vertexColors) return m;
+      if (m.userData && m.userData.keepSmooth) return m;   // slick tyres stay smooth
       if (swap.has(m.uuid)) return swap.get(m.uuid);
       const p = new THREE.MeshPhongMaterial({
         color: m.color,
@@ -1837,6 +1718,12 @@ carShadow.rotation.x = -Math.PI/2;
 carShadow.renderOrder = 2;
 scene.add(carShadow);
 
+function fmtLapTime(t){
+  const m = Math.floor(t/60);
+  const s = t - m*60;
+  return m + ':' + (s<10?'0':'') + s.toFixed(3);
+}
+
 // ---------- car (invisible body, POV camera) ----------
 const car = {
   pos: trackData[0].pos.clone(),
@@ -1859,8 +1746,6 @@ const OFFROAD_DECEL = ACCEL*0.3;   // losing speed off-track takes time, no inst
 // The old test compared the centreline offset against the road edge, so the car
 // was already half off the track before "OFF ROAD" appeared. These figures come
 // straight from the wheel placement, so they stay right if the car changes.
-const TYRE_OUTER  = (WHEEL_X + WHEEL_HALF_W)*BODY_SCALE;  // outer sidewall from centre
-const TYRE_WIDTH  = WHEEL_HALF_W*2*BODY_SCALE;            // tread width
 const OFFROAD_BITE = 0.20;                                // trips at 20% of the tread out
 const OFFROAD_EDGE = TRACK_HALF_WIDTH - (TYRE_OUTER - TYRE_WIDTH*OFFROAD_BITE);
 
@@ -1892,6 +1777,23 @@ function bindTouch(id, key){
 bindTouch('btnGas','up');
 bindTouch('btnBrake','down');
 if ('ontouchstart' in window){ document.getElementById('touch').style.display='block'; }
+
+// ---------- phone landscape: sit much closer to the wheel ----------
+// A phone held sideways is a very short window, so the cockpit ends up small and
+// far away. On a touch screen in landscape the whole car slides toward the eye,
+// which is the same as the driver sitting further forward: the wheel goes from
+// 0.60 m to 0.38 m away and reads about 1.6x larger. Desktop is untouched.
+const COARSE_POINTER = window.matchMedia
+  ? window.matchMedia('(pointer: coarse)').matches
+  : ('ontouchstart' in window);
+const NEAR_WHEEL_SHIFT = 0.22;
+function applyCockpitLayout(){
+  const landscape = window.innerWidth > window.innerHeight;
+  carFront.position.z = (COARSE_POINTER && landscape) ? NEAR_WHEEL_SHIFT : 0;
+}
+applyCockpitLayout();
+window.addEventListener('resize', applyCockpitLayout);
+window.addEventListener('orientationchange', ()=>setTimeout(applyCockpitLayout, 120));
 
 // ---------- floating virtual stick (left half of the screen, steering only) ----------
 // Touch down anywhere in the left half: the stick appears under the finger and
